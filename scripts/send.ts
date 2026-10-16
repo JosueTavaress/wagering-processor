@@ -1,3 +1,7 @@
+import {
+  MessageType,
+  QueueName,
+} from "../src/infra/messaging/MessagingContract";
 import { randomUUID } from "node:crypto";
 import { commandSchema } from "../src/infra/http/Validation";
 import { SqsBroker } from "../src/infra/messaging/SqsBroker";
@@ -10,13 +14,13 @@ try {
   await broker.publish(
     JSON.stringify({
       messageId,
-      type: "WagerTransactionRequested",
+      type: MessageType.WagerTransactionRequested,
       occurredAt: new Date().toISOString(),
       data: input,
     }),
     input.walletId,
     randomUUID(),
-    "wager-transactions.fifo",
+    QueueName.Transactions,
   );
   console.log(
     JSON.stringify({

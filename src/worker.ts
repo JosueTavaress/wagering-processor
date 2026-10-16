@@ -1,21 +1,24 @@
+import { HealthStatus } from "./infra/http/HttpContract";
 import "reflect-metadata";
+import { WorkerRole, ProcessSignal, ListenHost } from "./infra/RecoveryConfig";
+import { UnknownErrorCode } from "./infra/InfrastructureError";
 import { compose } from "./infra/composition";
 import { WagerConsumer } from "./infra/workers/WagerConsumer";
 import { OutboxPublisher } from "./infra/workers/OutboxPublisher";
 import { ReferenceWorker } from "./infra/workers/ReferenceWorker";
-import { telemetry } from "./infra/observability/Telemetry";
+import { telemetry, LogEvent } from "./infra/observability/Telemetry";
 const app = await compose();
-const role = process.env.WORKER_ROLE ?? "all";
+const role = process.env.WORKER_ROLE ?? WorkerRole.All;
 let stopping = false;
-process.on("SIGTERM", () => {
+process.on(ProcessSignal.Terminate, () => {
   stopping = true;
 });
-process.on("SIGINT", () => {
+process.on(ProcessSignal.Interrupt, () => {
   stopping = true;
 });
 const health = Bun.serve({
   port: Number(process.env.METRICS_PORT ?? 9090),
-  hostname: "0.0.0.0",
+  hostname: ListenHost,
   fetch: async (req) => {
     const path = new URL(req.url).pathname;
     if (path === "/metrics")
@@ -23,16 +26,24 @@ const health = Bun.serve({
         headers: { "Content-Type": telemetry.registry.contentType },
       });
     if (path === "/health/live")
-      return Response.json({ status: stopping ? "stopping" : "up" });
+      return Response.json({
+        status: stopping ? HealthStatus.Stopping : HealthStatus.Up,
+      });
     if (path === "/health/ready") {
       if (stopping)
-        return Response.json({ status: "stopping" }, { status: 503 });
+        return Response.json(
+          { status: HealthStatus.Stopping },
+          { status: 503 },
+        );
       try {
         await app.db.em.fork().execute("select 1");
         await app.broker.ready();
-        return Response.json({ status: "ready" });
+        return Response.json({ status: HealthStatus.Ready });
       } catch {
-        return Response.json({ status: "not_ready" }, { status: 503 });
+        return Response.json(
+          { status: HealthStatus.NotReady },
+          { status: 503 },
+        );
       }
     }
     return new Response(null, { status: 404 });
@@ -43,30 +54,30 @@ async function loop(name: string, tick: () => Promise<number>, delay: number) {
     try {
       await tick();
     } catch (error) {
-      telemetry.log("worker_retry", {
+      telemetry.log(LogEvent.WorkerRetry, {
         component: name,
-        errorCode: error instanceof Error ? error.name : "UNKNOWN",
+        errorCode: error instanceof Error ? error.name : UnknownErrorCode,
       });
     }
     if (!stopping) await Bun.sleep(delay);
   }
 }
 const tasks: Promise<void>[] = [];
-if (role === "all" || role === "consumer") {
+if (role === WorkerRole.All || role === WorkerRole.Consumer) {
   const worker = new WagerConsumer(app.broker, app.process, app.db);
-  tasks.push(loop("consumer", () => worker.tick(), 25));
+  tasks.push(loop(WorkerRole.Consumer, () => worker.tick(), 25));
 }
-if (role === "all" || role === "publisher") {
+if (role === WorkerRole.All || role === WorkerRole.Publisher) {
   const worker = new OutboxPublisher(app.db, app.broker);
-  tasks.push(loop("publisher", () => worker.tick(), 100));
+  tasks.push(loop(WorkerRole.Publisher, () => worker.tick(), 100));
 }
-if (role === "all" || role === "reference") {
+if (role === WorkerRole.All || role === WorkerRole.Reference) {
   const worker = new ReferenceWorker(app.db, app.process);
-  tasks.push(loop("reference", () => worker.tick(), 500));
+  tasks.push(loop(WorkerRole.Reference, () => worker.tick(), 500));
 }
-telemetry.log("worker_started", { role });
+telemetry.log(LogEvent.WorkerStarted, { role });
 await Promise.all(tasks);
 await health.stop(true);
 app.broker.close();
 await app.db.close(true);
-telemetry.log("worker_stopped");
+telemetry.log(LogEvent.WorkerStopped);

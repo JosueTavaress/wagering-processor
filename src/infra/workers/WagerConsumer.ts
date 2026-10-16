@@ -1,3 +1,8 @@
+import {
+  QueueName,
+  WagerConsumerName,
+  DeadLetterMessageGroup,
+} from "../messaging/MessagingContract";
 import { randomUUID } from "node:crypto";
 import {
   ReceiveMessageCommand,
@@ -5,15 +10,25 @@ import {
   DeleteMessageCommand,
   ChangeMessageVisibilityCommand,
   Message,
+  QueueAttributeName,
+  MessageSystemAttributeName,
 } from "@aws-sdk/client-sqs";
 import { SqsBroker } from "../messaging/SqsBroker";
 import { Database } from "../database/Database";
 import { ProcessWagerTransaction } from "../../application/process-wager-transaction/ProcessWagerTransaction";
 import { messageSchema } from "../http/Validation";
 import { hash } from "../../application/process-wager-transaction/CanonicalPayload";
-import { readRecoveryConfig } from "../RecoveryConfig";
+import {
+  readRecoveryConfig,
+  RuntimeEnvironment,
+  ProcessSignal,
+} from "../RecoveryConfig";
 import { classifyConsumerFailure } from "./ConsumerFailure";
-import { telemetry } from "../observability/Telemetry";
+import {
+  telemetry,
+  LogEvent,
+  RetryComponent,
+} from "../observability/Telemetry";
 export class WagerConsumer {
   private readonly config = readRecoveryConfig();
   constructor(
@@ -24,10 +39,10 @@ export class WagerConsumer {
   async tick() {
     const stats = await this.broker.client.send(
       new GetQueueAttributesCommand({
-        QueueUrl: await this.broker.url("wager-transactions-dlq.fifo"),
+        QueueUrl: await this.broker.url(QueueName.DeadLetters),
         AttributeNames: [
-          "ApproximateNumberOfMessages",
-          "ApproximateNumberOfMessagesNotVisible",
+          QueueAttributeName.ApproximateNumberOfMessages,
+          QueueAttributeName.ApproximateNumberOfMessagesNotVisible,
         ],
       }),
     );
@@ -35,14 +50,16 @@ export class WagerConsumer {
       Number(stats.Attributes?.ApproximateNumberOfMessages ?? 0) +
         Number(stats.Attributes?.ApproximateNumberOfMessagesNotVisible ?? 0),
     );
-    const url = await this.broker.url("wager-transactions.fifo");
+    const url = await this.broker.url(QueueName.Transactions);
     const response = await this.broker.client.send(
       new ReceiveMessageCommand({
         QueueUrl: url,
         MaxNumberOfMessages: 1,
         WaitTimeSeconds: 2,
         VisibilityTimeout: this.config.queueVisibilitySeconds,
-        MessageSystemAttributeNames: ["ApproximateReceiveCount"],
+        MessageSystemAttributeNames: [
+          MessageSystemAttributeName.ApproximateReceiveCount,
+        ],
       }),
     );
     for (const message of response.Messages ?? [])
@@ -75,7 +92,7 @@ export class WagerConsumer {
         correlationId: envelope.messageId,
         causationId: envelope.messageId,
         inbox: {
-          consumerName: "wager-v1",
+          consumerName: WagerConsumerName,
           messageId: envelope.messageId,
           payloadHash: hash(envelope.data),
         },
@@ -83,7 +100,7 @@ export class WagerConsumer {
       identifiers.transactionId = result.transactionId;
       if (result.idempotentReplay) telemetry.duplicates.inc();
       else telemetry.transactions.inc({ status: result.status });
-      telemetry.log("wager_consumed", {
+      telemetry.log(LogEvent.WagerConsumed, {
         correlationId: envelope.messageId,
         messageId: envelope.messageId,
         transactionId: result.transactionId,
@@ -92,10 +109,10 @@ export class WagerConsumer {
         status: result.status,
       });
       if (
-        process.env.NODE_ENV === "test" &&
+        process.env.NODE_ENV === RuntimeEnvironment.Test &&
         process.env.CRASH_AFTER_COMMIT_MESSAGE_ID === envelope.messageId
       )
-        process.kill(process.pid, "SIGKILL");
+        process.kill(process.pid, ProcessSignal.Kill);
       // Drain visibility changes before ack so no renewal outlives this message.
       await heartbeat.stop();
       // A returned result means the financial SQL commit has completed.
@@ -104,15 +121,19 @@ export class WagerConsumer {
       );
     } catch (error) {
       const failure = classifyConsumerFailure(error);
-      const attempts = Number(message.Attributes?.ApproximateReceiveCount ?? 1);
+      const attempts = Number(
+        message.Attributes?.[
+          MessageSystemAttributeName.ApproximateReceiveCount
+        ] ?? 1,
+      );
       if (!failure.retryable || attempts >= this.config.maxReceiveCount) {
         const reason = failure.reason;
         // DLQ first, then delete. Crashes can duplicate the dead letter, never silently lose it.
         await this.broker.publish(
           message.Body ?? "{}",
-          "dead-letter",
+          DeadLetterMessageGroup,
           message.MessageId ?? randomUUID(),
-          "wager-transactions-dlq.fifo",
+          QueueName.DeadLetters,
         );
         await this.db.em
           .fork()
@@ -126,7 +147,7 @@ export class WagerConsumer {
             ],
           );
         telemetry.dlq.inc();
-        telemetry.log("wager_dead_letter", {
+        telemetry.log(LogEvent.WagerDeadLetter, {
           ...identifiers,
           errorCode: failure.errorCode,
           failureCode: reason,
@@ -137,8 +158,8 @@ export class WagerConsumer {
           new DeleteMessageCommand({ QueueUrl: url, ReceiptHandle: receipt }),
         );
       } else {
-        telemetry.retries.inc({ component: "sqs" });
-        telemetry.log("wager_retry", {
+        telemetry.retries.inc({ component: RetryComponent.Sqs });
+        telemetry.log(LogEvent.WagerRetry, {
           ...identifiers,
           errorCode: failure.errorCode,
           failureCategory: failure.category,
@@ -187,7 +208,7 @@ export class WagerConsumer {
         );
       })()
         .catch(() => {
-          telemetry.log("visibility_extension_failed", { messageId });
+          telemetry.log(LogEvent.VisibilityExtensionFailed, { messageId });
         })
         .finally(() => {
           clearTimeout(timeout);

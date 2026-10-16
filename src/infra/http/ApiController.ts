@@ -1,3 +1,5 @@
+import { TransactionStatus } from "../../domain/entity/WagerTransaction";
+import { HttpHeader, HealthStatus } from "./HttpContract";
 import {
   Controller,
   Get,
@@ -9,24 +11,25 @@ import {
   Res,
   Inject,
 } from "@nestjs/common";
-import type { Response } from "express";
+import { type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ProcessWagerTransactionOutput } from "../../application/process-wager-transaction/ProcessWagerTransactionOutput";
+import { type ProcessWagerTransactionOutput } from "../../application/process-wager-transaction/ProcessWagerTransactionOutput";
 import type { Application } from "../composition";
+import { ApplicationToken } from "../composition";
 import { commandSchema, openWalletSchema, uuid } from "./Validation";
-import { telemetry } from "../observability/Telemetry";
+import { telemetry, LogEvent } from "../observability/Telemetry";
 const wagerHttpStatus = {
-  PROCESSED: 200,
-  PENDING: 202,
-  PENDING_REFERENCE: 202,
-  REJECTED: 422,
-  FAILED: 500,
+  [TransactionStatus.Processed]: 200,
+  [TransactionStatus.Pending]: 202,
+  [TransactionStatus.PendingReference]: 202,
+  [TransactionStatus.Rejected]: 422,
+  [TransactionStatus.Failed]: 500,
 } satisfies Record<ProcessWagerTransactionOutput["status"], number>;
 
 @Controller()
 export class ApiController {
-  constructor(@Inject("APPLICATION") private readonly app: Application) {}
+  constructor(@Inject(ApplicationToken) private readonly app: Application) {}
   @Post("wallets") async open(@Body() body: unknown) {
     return this.app.open.execute(openWalletSchema.parse(body));
   }
@@ -63,9 +66,9 @@ export class ApiController {
   }
   @Post("wagering/transactions") async wager(
     @Body() body: unknown,
-    @Headers("idempotency-key") key: string | undefined,
-    @Headers("authorization") authorization: string | undefined,
-    @Headers("x-correlation-id") correlation: string | undefined,
+    @Headers(HttpHeader.IdempotencyKey) key: string | undefined,
+    @Headers(HttpHeader.Authorization) authorization: string | undefined,
+    @Headers(HttpHeader.CorrelationId) correlation: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
     const input = commandSchema.parse({
@@ -80,10 +83,10 @@ export class ApiController {
       const result = await this.app.process.execute(input, { correlationId });
       res.locals.transactionId = result.transactionId;
       res.status(wagerHttpStatus[result.status]);
-      res.setHeader("X-Correlation-Id", correlationId);
+      res.setHeader(HttpHeader.CorrelationResponseId, correlationId);
       if (result.idempotentReplay) telemetry.duplicates.inc();
       else telemetry.transactions.inc({ status: result.status });
-      telemetry.log("wager_http", {
+      telemetry.log(LogEvent.WagerHttp, {
         correlationId,
         transactionId: result.transactionId,
         walletId: input.walletId,
@@ -104,16 +107,16 @@ export class ApiController {
     return this.app.reconcile.execute({ walletId: uuid(id) });
   }
   @Get("health/live") live() {
-    return { status: "up" };
+    return { status: HealthStatus.Up };
   }
   @Get("health/ready") async ready(@Res({ passthrough: true }) res: Response) {
     try {
       await this.app.db.em.fork().execute("select 1");
       await this.app.broker.ready();
-      return { status: "ready" };
+      return { status: HealthStatus.Ready };
     } catch {
       res.status(503);
-      return { status: "not_ready" };
+      return { status: HealthStatus.NotReady };
     }
   }
   @Get("metrics") async metrics(@Res() res: Response) {

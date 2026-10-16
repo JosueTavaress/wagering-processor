@@ -1,16 +1,26 @@
+import { QueueName } from "./MessagingContract";
 import {
   SQSClient,
   GetQueueUrlCommand,
   GetQueueAttributesCommand,
   SendMessageCommand,
+  QueueAttributeName,
 } from "@aws-sdk/client-sqs";
+const localSqsDefaults = {
+  region: "us-east-1",
+  endpoint: "http://localhost:4566",
+  accessKeyId: "test",
+  secretAccessKey: "test",
+} as const;
 export class SqsBroker {
   readonly client = new SQSClient({
-    region: process.env.AWS_REGION ?? "us-east-1",
-    endpoint: process.env.SQS_ENDPOINT ?? "http://localhost:4566",
+    region: process.env.AWS_REGION ?? localSqsDefaults.region,
+    endpoint: process.env.SQS_ENDPOINT ?? localSqsDefaults.endpoint,
     credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "test",
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "test",
+      accessKeyId:
+        process.env.AWS_ACCESS_KEY_ID ?? localSqsDefaults.accessKeyId,
+      secretAccessKey:
+        process.env.AWS_SECRET_ACCESS_KEY ?? localSqsDefaults.secretAccessKey,
     },
     maxAttempts: 3,
   });
@@ -29,14 +39,14 @@ export class SqsBroker {
   }
   async ready() {
     for (const name of [
-      "wager-transactions.fifo",
-      "wager-transactions-dlq.fifo",
-      "wager-events.fifo",
+      QueueName.Transactions,
+      QueueName.DeadLetters,
+      QueueName.Events,
     ])
       await this.client.send(
         new GetQueueAttributesCommand({
           QueueUrl: await this.url(name),
-          AttributeNames: ["QueueArn"],
+          AttributeNames: [QueueAttributeName.QueueArn],
         }),
       );
   }
@@ -44,7 +54,7 @@ export class SqsBroker {
     body: string,
     group: string,
     eventId: string,
-    queue = "wager-events.fifo",
+    queue: string = QueueName.Events,
   ) {
     await this.client.send(
       new SendMessageCommand({

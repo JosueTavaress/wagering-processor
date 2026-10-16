@@ -2,7 +2,6 @@ import { test, expect } from "bun:test";
 import {
   errorChain,
   infrastructureErrorCode,
-  infrastructureErrorName,
   isPermanentInfrastructureError,
   isTransientInfrastructureError,
 } from "../../src/infra/InfrastructureError";

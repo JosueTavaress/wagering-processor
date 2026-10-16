@@ -8,6 +8,8 @@ Priorizei correção financeira e recuperação após falhas. HTTP, SQS e o work
 - `application`: casos de uso e portas para persistência e identidade do provedor.
 - `infra`: HTTP, PostgreSQL, SQS, workers e composição das dependências.
 
+Tipos e estados de transação, direção do ledger e códigos de falha têm definições compartilhadas no domínio. Filas, headers e identificadores operacionais ficam nos contratos da infraestrutura. As consultas SQL recebem esses valores como parâmetros; migrations mantêm seus valores versionados.
+
 As consultas usam uma porta própria para evitar reconstruir agregados quando só preciso retornar dados. Mantive SQL explícito onde ele ajuda a conferir locks, deduplicação e leases.
 
 ## Dinheiro e persistência

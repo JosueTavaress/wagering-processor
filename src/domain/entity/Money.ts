@@ -1,4 +1,12 @@
-import { DomainError } from "./DomainError";
+import { DomainError, FailureCode } from "./DomainError";
+export const Currency = {
+  BRL: "BRL",
+  USD: "USD",
+  EUR: "EUR",
+} as const;
+
+const supportedCurrencies: readonly string[] = Object.values(Currency);
+export const ZeroAmount = "0.00";
 export type MoneyProps = { amount: string; currency: string };
 export class Money {
   private constructor(
@@ -9,10 +17,10 @@ export class Money {
   }
   static from(props: MoneyProps): Money {
     if (
-      !["BRL", "USD", "EUR"].includes(props.currency) ||
+      !supportedCurrencies.includes(props.currency) ||
       !/^-?(0|[1-9]\d{0,60})(\.\d{1,2})?$/.test(props.amount)
     )
-      throw new DomainError("INVALID_MONEY");
+      throw new DomainError(FailureCode.InvalidMoney);
     const negative = props.amount.startsWith("-");
     const [whole = "0", fraction = ""] = props.amount
       .replace("-", "")
@@ -24,11 +32,11 @@ export class Money {
     );
   }
   static zero(currency: string): Money {
-    return Money.from({ amount: "0.00", currency });
+    return Money.from({ amount: ZeroAmount, currency });
   }
   private assertSameCurrency(other: Money): void {
     if (this.currency !== other.currency)
-      throw new DomainError("CURRENCY_MISMATCH");
+      throw new DomainError(FailureCode.CurrencyMismatch);
   }
   add(other: Money): Money {
     this.assertSameCurrency(other);

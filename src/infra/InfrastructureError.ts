@@ -1,11 +1,38 @@
-const transientCodes = new Set([
-  "40001",
-  "40P01",
-  "55P03",
-  "57014",
-  "57P01",
-  "57P02",
-  "57P03",
+export const PostgresErrorCode = {
+  SerializationFailure: "40001",
+  Deadlock: "40P01",
+  LockNotAvailable: "55P03",
+  QueryCanceled: "57014",
+  AdminShutdown: "57P01",
+  CrashShutdown: "57P02",
+  CannotConnectNow: "57P03",
+  InsufficientPrivilege: "42501",
+  SyntaxError: "42601",
+  CheckViolation: "23514",
+  UniqueViolation: "23505",
+} as const;
+export const PostgresErrorClass = {
+  Connection: "08",
+  Resources: "53",
+  Authentication: "28",
+} as const;
+export const FailureCategory = {
+  Programming: "programming",
+  Domain: "domain",
+  InvalidMessage: "invalid-message",
+  Permanent: "permanent",
+  Transient: "transient",
+  Unknown: "unknown",
+} as const;
+export const UnknownErrorCode = "UNKNOWN";
+const transientCodes = new Set<string>([
+  PostgresErrorCode.SerializationFailure,
+  PostgresErrorCode.Deadlock,
+  PostgresErrorCode.LockNotAvailable,
+  PostgresErrorCode.QueryCanceled,
+  PostgresErrorCode.AdminShutdown,
+  PostgresErrorCode.CrashShutdown,
+  PostgresErrorCode.CannotConnectNow,
   "ECONNREFUSED",
   "ECONNRESET",
   "ETIMEDOUT",
@@ -66,8 +93,13 @@ const permanentNames = new Set([
   "CredentialsProviderError",
 ]);
 
+const permanentPostgresCodes: ReadonlySet<string> = new Set([
+  PostgresErrorCode.InsufficientPrivilege,
+  PostgresErrorCode.SyntaxError,
+  PostgresErrorCode.CheckViolation,
+]);
 type InfrastructureFailure = {
-  category: "permanent" | "transient";
+  category: typeof FailureCategory.Permanent | typeof FailureCategory.Transient;
   errorCode: string;
 };
 
@@ -79,36 +111,40 @@ export function classifyInfrastructureError(
     const code = typeof cause.code === "string" ? cause.code : undefined;
     const name = typeof cause.name === "string" ? cause.name : undefined;
     const status = serviceStatus(cause);
-    const errorCode = code ?? name ?? "UNKNOWN";
+    const errorCode = code ?? name ?? UnknownErrorCode;
     if (
       (code &&
-        (code.startsWith("28") ||
-          ["42501", "42601", "23514"].includes(code))) ||
+        (code.startsWith(PostgresErrorClass.Authentication) ||
+          permanentPostgresCodes.has(code))) ||
       (name && permanentNames.has(name)) ||
       status === 401 ||
       status === 403
     )
-      return { category: "permanent", errorCode };
+      return { category: FailureCategory.Permanent, errorCode };
     if (
       (code &&
         (transientCodes.has(code) ||
-          code.startsWith("08") ||
-          code.startsWith("53"))) ||
+          code.startsWith(PostgresErrorClass.Connection) ||
+          code.startsWith(PostgresErrorClass.Resources))) ||
       (name && transientNames.has(name)) ||
       (status !== undefined && (status === 429 || status >= 500))
     )
-      transient ??= { category: "transient", errorCode };
+      transient ??= { category: FailureCategory.Transient, errorCode };
   }
   // A permanent cause takes precedence even when an outer wrapper looks transient.
   return transient;
 }
 
 export function isPermanentInfrastructureError(error: unknown): boolean {
-  return classifyInfrastructureError(error)?.category === "permanent";
+  return (
+    classifyInfrastructureError(error)?.category === FailureCategory.Permanent
+  );
 }
 
 export function isTransientInfrastructureError(error: unknown): boolean {
-  return classifyInfrastructureError(error)?.category === "transient";
+  return (
+    classifyInfrastructureError(error)?.category === FailureCategory.Transient
+  );
 }
 
 export function infrastructureErrorName(error: unknown): string | undefined {

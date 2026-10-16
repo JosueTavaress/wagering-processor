@@ -85,7 +85,7 @@ Workers iniciados pelos novos testes são encerrados em finally. Os testes de cr
 
 ## Limites da evidência
 
-- A suíte completa passou no Ubuntu/WSL em 16/10/2026: typecheck e 213 testes (167 de unidade, 22 de integração e 24 de concorrência), incluindo as correções de configuração, classificação de falhas e heartbeat. A evidência está em VERIFICATION.md.
+- A suíte completa passou no Ubuntu/WSL em 16/10/2026: typecheck e 216 testes (170 de unidade, 22 de integração e 24 de concorrência), incluindo configuração, classificação de falhas, heartbeat, strings compartilhadas e inicialização HTTP. A evidência está em VERIFICATION.md.
 - São testes de correção, não um benchmark. Não há alegação de throughput ou percentis de latência.
 - O teste downstream usa uma fila real com três transport ids diferentes para o mesmo eventId e uma inbox SQL persistente. Ele demonstra um consumidor de referência de teste; não acrescenta um serviço downstream de produção.
 - Há teste de SIGTERM com uma transação bloqueada, identificada por pg_blocking_pids. Não há simulação de partição prolongada de rede.
@@ -120,3 +120,5 @@ A unidade valida os cinco parâmetros de recuperação, limites do serviço, fal
 As regressões de causas circulares rodam em processos filhos com timeout para que um loop no classificador não trave a suíte. Também há cadeias longas, erros encapsulados, precedência entre causas e um teste do consumidor com visibilidade de um segundo, verificando renovação antes da expiração e encerramento do heartbeat após o ack.
 
 As regressões de ciclo de vida mantêm uma renovação pendente durante retry, sucesso e DLQ. Conferem que ela termina antes do backoff/ack, que não há renovações simultâneas nem posteriores à conclusão e que falha ou cancelamento por timeout não impedem a finalização. São seis testes locais com transporte controlado em `test/unit/visibility-lifecycle.test.ts`.
+
+O teste `test/unit/http-bootstrap.test.ts` inicializa o módulo Nest com o controller real e uma aplicação de teste injetada, sem PostgreSQL/SQS. Ele cobre a resolução de imports e os metadados de decorators no Bun; não substitui os testes HTTP em containers. Os testes de processo verificam que falhas de inicialização exibem o stderr e que timeouts encerram o processo filho. Os 170 testes de unidade, 22 de integração e 24 de concorrência passaram na execução completa registrada em VERIFICATION.md.

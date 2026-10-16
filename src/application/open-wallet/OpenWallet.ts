@@ -4,8 +4,17 @@ import { OpenWalletInput } from "./OpenWalletInput";
 import { OpenWalletOutput } from "./OpenWalletOutput";
 import { Money } from "../../domain/entity/Money";
 import { Wallet } from "../../domain/entity/Wallet";
-import { WagerTransaction } from "../../domain/entity/WagerTransaction";
-import { WalletLedgerEntry } from "../../domain/entity/WalletLedgerEntry";
+import {
+  WagerTransaction,
+  InternalProviderId,
+  OpeningContextId,
+  TransactionKind,
+  TransactionStatus,
+} from "../../domain/entity/WagerTransaction";
+import {
+  WalletLedgerEntry,
+  LedgerDirection,
+} from "../../domain/entity/WalletLedgerEntry";
 import { OutboxMessage } from "../../domain/entity/OutboxMessage";
 import { WalletBalanceChanged } from "../../domain/event/WalletBalanceChanged";
 import { WagerTransactionProcessed } from "../../domain/event/WagerTransactionProcessed";
@@ -22,15 +31,15 @@ export class OpenWallet {
       if (wallet.balance.isPositive()) {
         const tx = WagerTransaction.create({
           id: randomUUID(),
-          providerId: "__internal__",
+          providerId: InternalProviderId,
           externalTransactionId: wallet.id,
           idempotencyKey: `opening:${wallet.id}`,
           payloadHash: wallet.id,
           walletId: wallet.id,
           playerId: wallet.playerId,
-          roundId: "opening",
-          gameId: "opening",
-          kind: "OPENING",
+          roundId: OpeningContextId,
+          gameId: OpeningContextId,
+          kind: TransactionKind.Opening,
           money: wallet.balance,
         });
         tx.markProcessed(undefined, new Date(), wallet.balance);
@@ -39,7 +48,7 @@ export class OpenWallet {
           id: randomUUID(),
           walletId: wallet.id,
           transactionId: tx.id,
-          direction: "CREDIT",
+          direction: LedgerDirection.Credit,
           money: wallet.balance,
           balanceBefore: Money.zero(wallet.currency),
           balanceAfter: wallet.balance,
@@ -54,7 +63,7 @@ export class OpenWallet {
           data: {
             transactionId: tx.id,
             walletId: wallet.id,
-            status: "PROCESSED",
+            status: TransactionStatus.Processed,
             money: wallet.balance.toJSON(),
             balance: wallet.balance.toJSON(),
             walletVersion: 1,
@@ -70,7 +79,7 @@ export class OpenWallet {
               eventId: randomUUID(),
               data: {
                 ...props.data,
-                direction: "CREDIT",
+                direction: LedgerDirection.Credit,
                 balanceBefore: Money.zero(wallet.currency).toJSON(),
                 balanceAfter: wallet.balance.toJSON(),
               },

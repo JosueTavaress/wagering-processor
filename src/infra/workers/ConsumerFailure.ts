@@ -5,14 +5,23 @@ import {
   infrastructureErrorCode,
   infrastructureErrorName,
   classifyInfrastructureError,
+  UnknownErrorCode,
+  FailureCategory,
 } from "../InfrastructureError";
+export const ConsumerFailureReason = {
+  Programming: "PROGRAMMING_ERROR",
+  InvalidMessage: "INVALID_MESSAGE",
+  PermanentInfrastructure: "PERMANENT_INFRASTRUCTURE_ERROR",
+  InfrastructureRetriesExhausted: "INFRASTRUCTURE_RETRIES_EXHAUSTED",
+  UnknownRetriesExhausted: "UNKNOWN_FAILURE_RETRIES_EXHAUSTED",
+} as const;
 
 export function classifyConsumerFailure(error: unknown) {
   const causes = [...errorChain(error)];
   const errorCode =
     infrastructureErrorCode(error) ??
     infrastructureErrorName(error) ??
-    "UNKNOWN";
+    UnknownErrorCode;
   // A recognized bug takes precedence over domain, payload and infrastructure errors.
   const programming = causes.find(
     (cause) =>
@@ -27,19 +36,19 @@ export function classifyConsumerFailure(error: unknown) {
         ? programming.code
         : String(programming.name);
     return {
-      category: "programming",
+      category: FailureCategory.Programming,
       retryable: false,
       reason:
         programming instanceof DomainError
           ? programming.code
-          : "PROGRAMMING_ERROR",
+          : ConsumerFailureReason.Programming,
       errorCode: code,
     } as const;
   }
   const domain = causes.find((cause) => cause instanceof DomainError);
   if (domain instanceof DomainError)
     return {
-      category: "domain",
+      category: FailureCategory.Domain,
       retryable: false,
       reason: domain.code,
       errorCode: domain.code,
@@ -49,30 +58,30 @@ export function classifyConsumerFailure(error: unknown) {
   );
   if (invalid)
     return {
-      category: "invalid-message",
+      category: FailureCategory.InvalidMessage,
       retryable: false,
-      reason: "INVALID_MESSAGE",
+      reason: ConsumerFailureReason.InvalidMessage,
       errorCode: String(invalid.name),
     } as const;
   const infrastructure = classifyInfrastructureError(error);
-  if (infrastructure?.category === "permanent")
+  if (infrastructure?.category === FailureCategory.Permanent)
     return {
-      category: "permanent",
+      category: FailureCategory.Permanent,
       retryable: false,
-      reason: "PERMANENT_INFRASTRUCTURE_ERROR",
+      reason: ConsumerFailureReason.PermanentInfrastructure,
       errorCode: infrastructure.errorCode,
     } as const;
-  if (infrastructure?.category === "transient")
+  if (infrastructure?.category === FailureCategory.Transient)
     return {
-      category: "transient",
+      category: FailureCategory.Transient,
       retryable: true,
-      reason: "INFRASTRUCTURE_RETRIES_EXHAUSTED",
+      reason: ConsumerFailureReason.InfrastructureRetriesExhausted,
       errorCode: infrastructure.errorCode,
     } as const;
   return {
-    category: "unknown",
+    category: FailureCategory.Unknown,
     retryable: true,
-    reason: "UNKNOWN_FAILURE_RETRIES_EXHAUSTED",
+    reason: ConsumerFailureReason.UnknownRetriesExhausted,
     errorCode,
   } as const;
 }

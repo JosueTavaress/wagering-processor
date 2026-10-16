@@ -1,16 +1,16 @@
-import type { LedgerDirection } from "../../domain/entity/WalletLedgerEntry";
+import { LedgerDirection } from "../../domain/entity/WalletLedgerEntry";
 import { Database } from "../database/Database";
 import {
   WalletQueries,
   TransactionView,
 } from "../../application/port/WalletQueries";
-import { DomainError } from "../../domain/entity/DomainError";
+import { DomainError, FailureCode } from "../../domain/entity/DomainError";
 import { Money } from "../../domain/entity/Money";
 import {
   TransactionRow,
   transactionFromRow,
 } from "./PostgresTransactionRepository";
-import { telemetry } from "../observability/Telemetry";
+import { telemetry, LogEvent } from "../observability/Telemetry";
 import { z } from "zod";
 type WalletRow = {
   id: string;
@@ -37,7 +37,7 @@ export class PostgresWalletQueries implements WalletQueries {
       .fork()
       .execute<WalletRow[]>("select * from wallets where id=?", [id]);
     const r = rows[0];
-    if (!r) throw new DomainError("WALLET_NOT_FOUND");
+    if (!r) throw new DomainError(FailureCode.WalletNotFound);
     return {
       id: r.id,
       playerId: r.player_id,
@@ -61,7 +61,7 @@ export class PostgresWalletQueries implements WalletQueries {
           })
           .parse(JSON.parse(Buffer.from(cursor, "base64url").toString()));
       } catch {
-        throw new DomainError("INVALID_CURSOR");
+        throw new DomainError(FailureCode.InvalidCursor);
       }
     }
     const params: unknown[] = [id];
@@ -106,7 +106,7 @@ export class PostgresWalletQueries implements WalletQueries {
   }
 
   private view(r: TransactionRow | undefined): TransactionView {
-    if (!r) throw new DomainError("TRANSACTION_NOT_FOUND");
+    if (!r) throw new DomainError(FailureCode.TransactionNotFound);
     const s = transactionFromRow(r).snapshot();
     return {
       transactionId: s.id,
@@ -153,11 +153,11 @@ export class PostgresWalletQueries implements WalletQueries {
           [id],
         )
       )[0];
-      if (!r) throw new DomainError("WALLET_NOT_FOUND");
+      if (!r) throw new DomainError(FailureCode.WalletNotFound);
       const totals = (
         await em.execute<{ total: string; count: string }[]>(
-          "select coalesce(sum(case direction when 'CREDIT' then amount else -amount end),0)::text total,count(*)::text count from wallet_ledger where wallet_id=?",
-          [id],
+          "select coalesce(sum(case direction when ? then amount else -amount end),0)::text total,count(*)::text count from wallet_ledger where wallet_id=?",
+          [LedgerDirection.Credit, id],
         )
       )[0]!;
       const stored = Money.from({ amount: r.balance, currency: r.currency }),
@@ -165,7 +165,7 @@ export class PostgresWalletQueries implements WalletQueries {
         difference = stored.subtract(calculated);
       if (!difference.isZero()) {
         telemetry.divergences.inc();
-        telemetry.log("reconciliation_divergence", { walletId: id });
+        telemetry.log(LogEvent.ReconciliationDivergence, { walletId: id });
       }
       return {
         walletId: id,

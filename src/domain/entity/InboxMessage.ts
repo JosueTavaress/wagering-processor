@@ -1,4 +1,4 @@
-import { DomainError } from "./DomainError";
+import { DomainError, FailureCode } from "./DomainError";
 export type InboxState = {
   messageId: string;
   consumerName: string;
@@ -27,7 +27,8 @@ export class InboxMessage {
     return !!this.state.processedAt;
   }
   markProcessed(at: Date) {
-    if (this.isProcessed()) throw new DomainError("INBOX_ALREADY_PROCESSED");
+    if (this.isProcessed())
+      throw new DomainError(FailureCode.InboxAlreadyProcessed);
     this.state.processedAt = new Date(at);
   }
   snapshot() {

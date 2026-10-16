@@ -1,10 +1,19 @@
+import {
+  TransactionStatus,
+  TransactionKind,
+} from "../../domain/entity/WagerTransaction";
+import { UnknownErrorCode } from "../InfrastructureError";
 import { Database } from "../database/Database";
 import { ProcessWagerTransaction } from "../../application/process-wager-transaction/ProcessWagerTransaction";
 import {
   TransactionRow,
   transactionFromRow,
 } from "../repository/PostgresTransactionRepository";
-import { telemetry } from "../observability/Telemetry";
+import {
+  telemetry,
+  RetryComponent,
+  LogEvent,
+} from "../observability/Telemetry";
 export class ReferenceWorker {
   constructor(
     private readonly db: Database,
@@ -15,12 +24,12 @@ export class ReferenceWorker {
       .fork()
       .execute<
         TransactionRow[]
-      >("select * from wager_transactions where status='PENDING_REFERENCE' and next_attempt_at<=now() order by next_attempt_at limit 50");
+      >("select * from wager_transactions where status=? and next_attempt_at<=now() order by next_attempt_at limit 50", [TransactionStatus.PendingReference]);
     for (const row of rows) {
       const s = transactionFromRow(row).snapshot();
-      if (s.kind === "OPENING") continue;
+      if (s.kind === TransactionKind.Opening) continue;
       try {
-        telemetry.retries.inc({ component: "reference" });
+        telemetry.retries.inc({ component: RetryComponent.Reference });
         const result = await this.process.execute(
           {
             providerId: s.providerId,
@@ -39,12 +48,12 @@ export class ReferenceWorker {
         if (!result.idempotentReplay)
           telemetry.transactions.inc({ status: result.status });
       } catch (error) {
-        telemetry.log("reference_retry", {
+        telemetry.log(LogEvent.ReferenceRetry, {
           transactionId: s.id,
           walletId: s.walletId,
           providerId: s.providerId,
           correlationId: s.id,
-          errorCode: error instanceof Error ? error.name : "UNKNOWN",
+          errorCode: error instanceof Error ? error.name : UnknownErrorCode,
         });
       }
     }

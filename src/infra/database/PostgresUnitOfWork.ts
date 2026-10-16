@@ -1,14 +1,22 @@
 import { Database } from "./Database";
-import type {
-  UnitOfWork,
-  TransactionContext,
+import {
+  type UnitOfWork,
+  type TransactionContext,
 } from "../../application/port/UnitOfWork";
 import { PostgresWalletRepository } from "../repository/PostgresWalletRepository";
 import { PostgresTransactionRepository } from "../repository/PostgresTransactionRepository";
-import { infrastructureErrorCode } from "../InfrastructureError";
+import {
+  infrastructureErrorCode,
+  PostgresErrorCode,
+} from "../InfrastructureError";
 import { InboxMessage } from "../../domain/entity/InboxMessage";
-import { DomainError } from "../../domain/entity/DomainError";
-import { telemetry } from "../observability/Telemetry";
+import { DomainError, FailureCode } from "../../domain/entity/DomainError";
+import { telemetry, RetryComponent } from "../observability/Telemetry";
+const retryableTransactionCodes: ReadonlySet<string> = new Set([
+  PostgresErrorCode.Deadlock,
+  PostgresErrorCode.LockNotAvailable,
+  PostgresErrorCode.SerializationFailure,
+]);
 export class PostgresUnitOfWork implements UnitOfWork {
   constructor(private readonly db: Database) {}
   async run<T>(work: (context: TransactionContext) => Promise<T>): Promise<T> {
@@ -76,22 +84,23 @@ export class PostgresUnitOfWork implements UnitOfWork {
                   rows[0]?.payload_hash !== ctx.payloadHash ||
                   rows[0]?.transaction_id !== transactionId
                 )
-                  throw new DomainError("INBOX_CONFLICT");
+                  throw new DomainError(FailureCode.InboxConflict);
               },
             },
           });
         });
       } catch (error) {
         const code = infrastructureErrorCode(error);
-        if (["40P01", "55P03", "40001"].includes(code ?? "")) {
+        if (retryableTransactionCodes.has(code ?? "")) {
           telemetry.locks.inc();
           if (attempt < 3) {
-            telemetry.retries.inc({ component: "database" });
+            telemetry.retries.inc({ component: RetryComponent.Database });
             await Bun.sleep(25 * 2 ** attempt + Math.random() * 25);
             continue;
           }
         }
-        if (code === "23505") throw new DomainError("UNIQUENESS_CONFLICT");
+        if (code === PostgresErrorCode.UniqueViolation)
+          throw new DomainError(FailureCode.UniquenessConflict);
         throw error;
       }
     }

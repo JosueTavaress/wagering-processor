@@ -1,3 +1,18 @@
+export const ProcessSignal = {
+  Terminate: "SIGTERM",
+  Interrupt: "SIGINT",
+  Kill: "SIGKILL",
+} as const;
+export const ListenHost = "0.0.0.0";
+export const WorkerRole = {
+  All: "all",
+  Consumer: "consumer",
+  Publisher: "publisher",
+  Reference: "reference",
+} as const;
+export const RuntimeEnvironment = {
+  Test: "test",
+} as const;
 type Environment = Record<string, string | undefined>;
 
 function positiveInteger(

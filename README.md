@@ -2,7 +2,7 @@
 
 Processador financeiro de apostas com Bun, NestJS, PostgreSQL, MikroORM e SQS/LocalStack. Código organizado em `domain`, `application` e `infra`, com Input/Output separados por caso de uso.
 
-**Verificação:** typecheck e 213 testes aprovados em containers no Ubuntu/WSL em 16/10/2026: 167 de unidade, 22 de integração e 24 de concorrência, sem falhas. A formatação foi aprovada separadamente. Consulte [VERIFICATION.md](VERIFICATION.md) para a evidência e [docs/TESTING.md](docs/TESTING.md) para a cobertura.
+**Verificação:** typecheck e 216 testes aprovados em containers no Ubuntu/WSL em 16/10/2026: 170 de unidade, 22 de integração e 24 de concorrência, sem falhas. A formatação foi aprovada separadamente. Consulte [VERIFICATION.md](VERIFICATION.md) para a evidência e [docs/TESTING.md](docs/TESTING.md) para a cobertura.
 
 ## Modelagem e arquitetura
 

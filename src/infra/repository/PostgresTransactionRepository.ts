@@ -4,6 +4,7 @@ import {
   WagerTransaction,
   Kind,
   Status,
+  TransactionStatus,
 } from "../../domain/entity/WagerTransaction";
 import { Money } from "../../domain/entity/Money";
 export type TransactionRow = {
@@ -76,8 +77,8 @@ export class PostgresTransactionRepository implements TransactionRepository {
   }
   async hasReversal(id: string, kind: Kind) {
     const rows = await this.em.execute<{ id: string }[]>(
-      "select id from wager_transactions where reference_transaction_id=? and kind=? and status='PROCESSED'",
-      [id, kind],
+      "select id from wager_transactions where reference_transaction_id=? and kind=? and status=?",
+      [id, kind, TransactionStatus.Processed],
     );
     return rows.length > 0;
   }

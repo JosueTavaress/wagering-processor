@@ -1,19 +1,21 @@
 # Verificação
 
-**Suíte completa aprovada em 16/10/2026: typecheck e 213 testes, sem falhas.**
+**Suíte completa aprovada em 16/10/2026: typecheck e 216 testes, sem falhas.**
+
+A execução inclui a centralização das strings compartilhadas e a correção da inicialização HTTP no Bun. Os três cenários HTTP que falharam na tentativa anterior passaram nesta rodada.
 
 | Verificação                     | Resultado                              |
 | ------------------------------- | -------------------------------------- |
 | Typecheck                       | Aprovado                               |
-| Unidade                         | 167 passaram · 0 falhas                |
+| Unidade                         | 170 passaram · 0 falhas                |
 | Integração com PostgreSQL e SQS | 22 passaram · 0 falhas                 |
 | Concorrência entre processos    | 24 passaram · 0 falhas                 |
-| **Total**                       | **213 passaram · 0 falhas**            |
+| **Total**                       | **216 passaram · 0 falhas**            |
 | Formatação com Prettier         | Aprovada em verificação local separada |
 
 **Cenários críticos:** idempotência, disputa de saldo, múltiplos processos, atomicidade, referências fora de ordem, retry/DLQ, recuperação após crash, leases e SIGTERM. As regressões de configuração, causas circulares/encapsuladas e heartbeat pendente durante retry/ack também passaram. Cobertura detalhada em [docs/TESTING.md](docs/TESTING.md).
 
-A execução completa foi realizada no Ubuntu/WSL, com Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0 em containers reais. A saída foi compartilhada na revisão. A imagem de testes exibida foi `sha256:e00a5d600665587f62826b68ed72f73890b5aa8100be8bd772f9a57805b43776`. O log completo dessa execução aprovada e o commit correspondente ainda não estão arquivados no repositório.
+A execução completa foi realizada no Ubuntu/WSL, com Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0 em containers reais.
 
 **Limite da evidência:** os resultados comprovam os cenários exercitados nessa execução. Não são benchmark de carga; alterações no código exigem nova validação. O comando da suíte não inclui o check de formatação, executado separadamente e também configurado na CI.
 

@@ -1,6 +1,11 @@
 import { Money } from "./Money";
-import { DomainError } from "./DomainError";
-export type LedgerDirection = "DEBIT" | "CREDIT";
+import { DomainError, FailureCode } from "./DomainError";
+export const LedgerDirection = {
+  Debit: "DEBIT",
+  Credit: "CREDIT",
+} as const;
+export type LedgerDirection =
+  (typeof LedgerDirection)[keyof typeof LedgerDirection];
 
 export type LedgerState = {
   id: string;
@@ -27,7 +32,7 @@ export class WalletLedgerEntry {
       state.balanceAfter.isNegative() ||
       !entry.isBalanced()
     )
-      throw new DomainError("UNBALANCED_LEDGER");
+      throw new DomainError(FailureCode.UnbalancedLedger);
     return entry;
   }
   static rehydrate(state: LedgerState): WalletLedgerEntry {
@@ -42,7 +47,7 @@ export class WalletLedgerEntry {
   isBalanced(): boolean {
     const s = this.state;
     return (
-      s.direction === "CREDIT"
+      s.direction === LedgerDirection.Credit
         ? s.balanceBefore.add(s.money)
         : s.balanceBefore.subtract(s.money)
     ).equals(s.balanceAfter);

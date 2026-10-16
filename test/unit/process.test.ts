@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { waitForWorkerCrash } from "../helpers";
+import { waitForWorkerCrash, waitForApi } from "../helpers";
 
 function child(source: string) {
   return Bun.spawn([process.execPath, "-e", source], {
@@ -27,4 +27,24 @@ test("crash wait terminates a child when the deadline expires", async () => {
     "WORKER_CRASH_TIMEOUT",
   );
   expect(worker.signalCode).toBe("SIGKILL");
+});
+
+test("API startup reports a child failure instead of a generic readiness timeout", async () => {
+  const process = child(
+    'console.error("API_BOOT_FAILURE_SENTINEL"); process.exit(1)',
+  );
+  await expect(waitForApi(process, 1, 5000)).rejects.toThrow(
+    "API_BOOT_FAILURE_SENTINEL",
+  );
+  expect(process.exitCode).toBe(1);
+});
+
+test("API readiness timeout terminates the child and includes startup diagnostics", async () => {
+  const process = child(
+    'console.error("API_STILL_STARTING_SENTINEL"); await Bun.sleep(60000)',
+  );
+  await expect(waitForApi(process, 1, 250)).rejects.toThrow(
+    "API_STARTUP_FAILED",
+  );
+  expect(process.signalCode).toBe("SIGKILL");
 });

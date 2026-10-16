@@ -1,13 +1,19 @@
-import { WagerTransaction } from "../entity/WagerTransaction";
+import { LedgerDirection } from "../entity/WalletLedgerEntry";
+import {
+  WagerTransaction,
+  TransactionStatus,
+  TransactionKind,
+  type Kind,
+} from "../entity/WagerTransaction";
 import { Wallet } from "../entity/Wallet";
-import { DomainError } from "../entity/DomainError";
+import { DomainError, FailureCode } from "../entity/DomainError";
 export class WagerPolicy {
   static validateWallet(transaction: WagerTransaction, wallet: Wallet): void {
     const transactionState = transaction.snapshot();
     if (transactionState.playerId !== wallet.playerId)
-      throw new DomainError("PLAYER_MISMATCH");
+      throw new DomainError(FailureCode.PlayerMismatch);
     if (transactionState.money.currency !== wallet.currency)
-      throw new DomainError("CURRENCY_MISMATCH");
+      throw new DomainError(FailureCode.CurrencyMismatch);
   }
   static validateReference(
     transaction: WagerTransaction,
@@ -16,17 +22,19 @@ export class WagerPolicy {
     this.validateReferenceIdentity(transaction, reference);
     const transactionState = transaction.snapshot();
     const referenceState = reference.snapshot();
-    if (referenceState.status !== "PROCESSED")
-      throw new DomainError("REFERENCE_NOT_PROCESSED");
-    const allowedReferenceKinds =
-      transactionState.kind === "ROLLBACK" ? ["BET", "WIN", "REFUND"] : ["BET"];
+    if (referenceState.status !== TransactionStatus.Processed)
+      throw new DomainError(FailureCode.ReferenceNotProcessed);
+    const allowedReferenceKinds: readonly Kind[] =
+      transactionState.kind === TransactionKind.Rollback
+        ? [TransactionKind.Bet, TransactionKind.Win, TransactionKind.Refund]
+        : [TransactionKind.Bet];
     if (!allowedReferenceKinds.includes(referenceState.kind))
-      throw new DomainError("INVALID_REFERENCE_KIND");
+      throw new DomainError(FailureCode.InvalidReferenceKind);
     if (
       transaction.requiresReference() &&
       !transactionState.money.equals(referenceState.money)
     )
-      throw new DomainError("REFERENCE_AMOUNT_MISMATCH");
+      throw new DomainError(FailureCode.ReferenceAmountMismatch);
   }
   static validateReferenceIdentity(
     transaction: WagerTransaction,
@@ -35,7 +43,7 @@ export class WagerPolicy {
     const transactionState = transaction.snapshot();
     const referenceState = reference.snapshot();
     if (transactionState.id === referenceState.id)
-      throw new DomainError("INVALID_REFERENCE");
+      throw new DomainError(FailureCode.InvalidReference);
     if (
       transactionState.providerId !== referenceState.providerId ||
       transactionState.playerId !== referenceState.playerId ||
@@ -43,7 +51,7 @@ export class WagerPolicy {
       transactionState.roundId !== referenceState.roundId ||
       transactionState.money.currency !== referenceState.money.currency
     )
-      throw new DomainError("REFERENCE_MISMATCH");
+      throw new DomainError(FailureCode.ReferenceMismatch);
   }
   static apply(
     transaction: WagerTransaction,
@@ -51,15 +59,15 @@ export class WagerPolicy {
     reference?: WagerTransaction,
   ): void {
     if (!transaction.affectsBalance()) return;
-    if (transaction.ledgerDirectionFor(reference) === "CREDIT") {
+    if (transaction.ledgerDirectionFor(reference) === LedgerDirection.Credit) {
       wallet.credit(transaction.money);
       return;
     }
     wallet.debit(
       transaction.money,
-      transaction.kind === "ROLLBACK"
-        ? "REVERSAL_INSUFFICIENT_FUNDS"
-        : "INSUFFICIENT_FUNDS",
+      transaction.kind === TransactionKind.Rollback
+        ? FailureCode.ReversalInsufficientFunds
+        : FailureCode.InsufficientFunds,
     );
   }
 }

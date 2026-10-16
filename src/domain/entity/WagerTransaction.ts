@@ -1,13 +1,39 @@
-import type { LedgerDirection } from "./WalletLedgerEntry";
+import { LedgerDirection } from "./WalletLedgerEntry";
 import { Money } from "./Money";
-import { DomainError } from "./DomainError";
-export type Kind = "OPENING" | "BET" | "WIN" | "LOSS" | "REFUND" | "ROLLBACK";
-export type Status =
-  | "PENDING"
-  | "PENDING_REFERENCE"
-  | "PROCESSED"
-  | "REJECTED"
-  | "FAILED";
+import { DomainError, FailureCode } from "./DomainError";
+export const InternalProviderId = "__internal__";
+export const OpeningContextId = "opening";
+
+export const TransactionKind = {
+  Opening: "OPENING",
+  Bet: "BET",
+  Win: "WIN",
+  Loss: "LOSS",
+  Refund: "REFUND",
+  Rollback: "ROLLBACK",
+} as const;
+export type Kind = (typeof TransactionKind)[keyof typeof TransactionKind];
+export const TransactionStatus = {
+  Pending: "PENDING",
+  PendingReference: "PENDING_REFERENCE",
+  Processed: "PROCESSED",
+  Rejected: "REJECTED",
+  Failed: "FAILED",
+} as const;
+export type Status = (typeof TransactionStatus)[keyof typeof TransactionStatus];
+export const ReversalKinds: readonly Kind[] = [
+  TransactionKind.Refund,
+  TransactionKind.Rollback,
+];
+export const NonReferencingKinds: readonly Kind[] = [
+  TransactionKind.Bet,
+  TransactionKind.Loss,
+];
+export const TerminalStatuses: readonly Status[] = [
+  TransactionStatus.Processed,
+  TransactionStatus.Rejected,
+  TransactionStatus.Failed,
+];
 export type TransactionState = {
   id: string;
   providerId: string;
@@ -39,24 +65,26 @@ export class WagerTransaction {
     >,
   ): WagerTransaction {
     if (
-      ["BET", "LOSS"].includes(props.kind) &&
+      NonReferencingKinds.includes(props.kind) &&
       props.referenceExternalTransactionId
     )
-      throw new DomainError("UNEXPECTED_REFERENCE");
+      throw new DomainError(FailureCode.UnexpectedReference);
     if (props.referenceExternalTransactionId === props.externalTransactionId)
-      throw new DomainError("INVALID_REFERENCE");
+      throw new DomainError(FailureCode.InvalidReference);
     if (
-      ["REFUND", "ROLLBACK"].includes(props.kind) &&
+      ReversalKinds.includes(props.kind) &&
       !props.referenceExternalTransactionId
     )
-      throw new DomainError("REFERENCE_REQUIRED");
+      throw new DomainError(FailureCode.ReferenceRequired);
     if (
-      props.kind === "LOSS" ? !props.money.isZero() : !props.money.isPositive()
+      props.kind === TransactionKind.Loss
+        ? !props.money.isZero()
+        : !props.money.isPositive()
     )
-      throw new DomainError("INVALID_AMOUNT");
+      throw new DomainError(FailureCode.InvalidAmount);
     return new WagerTransaction({
       ...props,
-      status: "PENDING",
+      status: TransactionStatus.Pending,
       createdAt: new Date(),
       attempts: 0,
       nextAttemptAt: new Date(),
@@ -99,24 +127,26 @@ export class WagerTransaction {
     return this.state.referenceTransactionId;
   }
   isTerminal(): boolean {
-    return ["PROCESSED", "REJECTED", "FAILED"].includes(this.status);
+    return TerminalStatuses.includes(this.status);
   }
   affectsBalance(): boolean {
-    return this.kind !== "LOSS";
+    return this.kind !== TransactionKind.Loss;
   }
   requiresReference(): boolean {
-    return ["REFUND", "ROLLBACK"].includes(this.kind);
+    return ReversalKinds.includes(this.kind);
   }
   isReferenceRetryDue(now: Date): boolean {
     return (
-      this.status === "PENDING_REFERENCE" && this.state.nextAttemptAt <= now
+      this.status === TransactionStatus.PendingReference &&
+      this.state.nextAttemptAt <= now
     );
   }
   matchesPayload(hash: string): boolean {
     return this.state.payloadHash === hash;
   }
   private assertMutable(): void {
-    if (this.isTerminal()) throw new DomainError("INVALID_TRANSACTION_STATE");
+    if (this.isTerminal())
+      throw new DomainError(FailureCode.InvalidTransactionState);
   }
   markProcessed(
     referenceId: string | undefined,
@@ -125,7 +155,7 @@ export class WagerTransaction {
   ): void {
     this.assertMutable();
     Object.assign(this.state, {
-      status: "PROCESSED",
+      status: TransactionStatus.Processed,
       referenceTransactionId: referenceId,
       processedAt: new Date(at),
       balance,
@@ -133,7 +163,7 @@ export class WagerTransaction {
   }
   markPendingReference(balance: Money, now = new Date()): void {
     this.assertMutable();
-    this.state.status = "PENDING_REFERENCE";
+    this.state.status = TransactionStatus.PendingReference;
     this.state.balance = balance;
     this.state.attempts++;
     this.state.nextAttemptAt = new Date(
@@ -143,7 +173,7 @@ export class WagerTransaction {
   reject(code: string, balance: Money): void {
     this.assertMutable();
     Object.assign(this.state, {
-      status: "REJECTED",
+      status: TransactionStatus.Rejected,
       failureCode: code,
       processedAt: new Date(),
       balance,
@@ -152,17 +182,22 @@ export class WagerTransaction {
   fail(code: string): void {
     this.assertMutable();
     Object.assign(this.state, {
-      status: "FAILED",
+      status: TransactionStatus.Failed,
       failureCode: code,
       processedAt: new Date(),
     });
   }
   ledgerDirectionFor(reference?: WagerTransaction): LedgerDirection {
-    if (this.kind === "LOSS") throw new DomainError("NO_LEDGER_DIRECTION");
-    if (this.kind === "ROLLBACK") {
-      if (!reference) throw new DomainError("REFERENCE_REQUIRED");
-      return reference.kind === "BET" ? "CREDIT" : "DEBIT";
+    if (this.kind === TransactionKind.Loss)
+      throw new DomainError(FailureCode.NoLedgerDirection);
+    if (this.kind === TransactionKind.Rollback) {
+      if (!reference) throw new DomainError(FailureCode.ReferenceRequired);
+      return reference.kind === TransactionKind.Bet
+        ? LedgerDirection.Credit
+        : LedgerDirection.Debit;
     }
-    return this.kind === "BET" ? "DEBIT" : "CREDIT";
+    return this.kind === TransactionKind.Bet
+      ? LedgerDirection.Debit
+      : LedgerDirection.Credit;
   }
 }

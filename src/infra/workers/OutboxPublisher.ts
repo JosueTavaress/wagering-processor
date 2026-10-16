@@ -1,11 +1,18 @@
+import { UnknownErrorCode } from "../InfrastructureError";
 import { randomUUID } from "node:crypto";
 import { Database } from "../database/Database";
 import { SqsBroker } from "../messaging/SqsBroker";
-import { telemetry } from "../observability/Telemetry";
+import {
+  telemetry,
+  LogEvent,
+  RetryComponent,
+} from "../observability/Telemetry";
 import { OutboxMessage } from "../../domain/entity/OutboxMessage";
-
-import { readRecoveryConfig } from "../RecoveryConfig";
-
+import {
+  readRecoveryConfig,
+  RuntimeEnvironment,
+  ProcessSignal,
+} from "../RecoveryConfig";
 type ClaimedMessage = {
   id: string;
   aggregate_id: string;
@@ -73,10 +80,10 @@ export class OutboxPublisher {
         row.id,
       );
       if (
-        process.env.NODE_ENV === "test" &&
+        process.env.NODE_ENV === RuntimeEnvironment.Test &&
         process.env.CRASH_AFTER_PUBLISH === "1"
       )
-        process.kill(process.pid, "SIGKILL");
+        process.kill(process.pid, ProcessSignal.Kill);
       if (lease.isLost()) {
         this.logLostLease(row);
         return;
@@ -139,7 +146,7 @@ export class OutboxPublisher {
   }
 
   private logLostLease(row: ClaimedMessage): void {
-    telemetry.log("outbox_lease_lost", {
+    telemetry.log(LogEvent.OutboxLeaseLost, {
       correlationId: row.payload.correlationId,
       walletId: row.aggregate_id,
       eventId: row.id,
@@ -156,8 +163,8 @@ export class OutboxPublisher {
     error: unknown;
   }): Promise<void> {
     const { payload, aggregateId } = message.snapshot();
-    telemetry.retries.inc({ component: "outbox" });
-    telemetry.log("outbox_retry", {
+    telemetry.retries.inc({ component: RetryComponent.Outbox });
+    telemetry.log(LogEvent.OutboxRetry, {
       transactionId:
         payload.data &&
         typeof payload.data === "object" &&
@@ -166,7 +173,7 @@ export class OutboxPublisher {
           : null,
       walletId: aggregateId,
       correlationId: payload.correlationId,
-      errorCode: error instanceof Error ? error.name : "UNKNOWN",
+      errorCode: error instanceof Error ? error.name : UnknownErrorCode,
     });
     message.scheduleRetry(new Date());
     const retry = message.snapshot();

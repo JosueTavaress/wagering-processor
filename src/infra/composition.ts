@@ -11,6 +11,8 @@ import { GetProviderTransaction } from "../application/get-provider-transaction/
 import { ReconcileWallet } from "../application/reconcile-wallet/ReconcileWallet";
 import { DemoProviderIdentity } from "./auth/DemoProviderIdentity";
 import { readRecoveryConfig } from "./RecoveryConfig";
+export const ApplicationToken = "APPLICATION";
+
 export async function compose() {
   const config = readRecoveryConfig();
   const db = await connect(),

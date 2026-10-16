@@ -8,12 +8,15 @@ import { ProcessWagerTransactionOutput } from "./ProcessWagerTransactionOutput";
 import { businessHash } from "./CanonicalPayload";
 import { Money } from "../../domain/entity/Money";
 import { Wallet } from "../../domain/entity/Wallet";
-import { WagerTransaction } from "../../domain/entity/WagerTransaction";
+import {
+  WagerTransaction,
+  TransactionStatus,
+} from "../../domain/entity/WagerTransaction";
 import { WalletLedgerEntry } from "../../domain/entity/WalletLedgerEntry";
 import { OutboxMessage } from "../../domain/entity/OutboxMessage";
-import { DomainError } from "../../domain/entity/DomainError";
+import { DomainError, FailureCode } from "../../domain/entity/DomainError";
 import { WagerPolicy } from "../../domain/service/WagerPolicy";
-import type { IntegrationEventProps } from "../../domain/event/IntegrationEvent";
+import { type IntegrationEventProps } from "../../domain/event/IntegrationEvent";
 import {
   WagerTransactionProcessed,
   type WagerTransactionProcessedData,
@@ -44,7 +47,7 @@ export class ProcessWagerTransaction {
       // Detect an existing conflicting key even when the submitted wallet is absent.
       await this.findExistingTransaction(persistence, { input, payloadHash });
       const wallet = await persistence.wallets.lock(input.walletId);
-      if (!wallet) throw new DomainError("WALLET_NOT_FOUND");
+      if (!wallet) throw new DomainError(FailureCode.WalletNotFound);
 
       const existing = await this.findExistingTransaction(persistence, {
         input,
@@ -125,7 +128,7 @@ export class ProcessWagerTransaction {
       transaction &&
       transaction.snapshot().idempotencyKey !== input.idempotencyKey;
     if (matches.length > 1 || payloadConflicts || keyConflicts)
-      throw new DomainError("IDEMPOTENCY_CONFLICT");
+      throw new DomainError(FailureCode.IdempotencyConflict);
     return transaction;
   }
 
@@ -139,7 +142,7 @@ export class ProcessWagerTransaction {
     input: ProcessWagerTransactionInput;
   }): Promise<WagerTransaction | undefined> {
     if (!input.referenceExternalTransactionId) return undefined;
-    if (transaction.status === "PENDING_REFERENCE")
+    if (transaction.status === TransactionStatus.PendingReference)
       this.assertReferenceDeadline(transaction);
     const reference = await persistence.transactions.findReference(
       input.providerId,
@@ -156,7 +159,7 @@ export class ProcessWagerTransaction {
         reference.id,
         transaction.kind,
       ));
-    if (alreadyReversed) throw new DomainError("ALREADY_REVERSED");
+    if (alreadyReversed) throw new DomainError(FailureCode.AlreadyReversed);
     return reference;
   }
 
@@ -168,7 +171,8 @@ export class ProcessWagerTransaction {
   }: TransactionWork): Promise<ProcessWagerTransactionOutput> {
     this.assertReferenceDeadline(transaction);
 
-    const firstPendingNotification = transaction.status !== "PENDING_REFERENCE";
+    const firstPendingNotification =
+      transaction.status !== TransactionStatus.PendingReference;
     transaction.markPendingReference(wallet.balance);
     await persistence.transactions.save(transaction);
     if (context.inbox)
@@ -189,7 +193,7 @@ export class ProcessWagerTransaction {
     const referenceExpired =
       Date.now() - state.createdAt.getTime() >= this.referenceTTL;
     if (attemptsExhausted || referenceExpired)
-      throw new DomainError("REFERENCE_EXPIRED");
+      throw new DomainError(FailureCode.ReferenceExpired);
   }
 
   private applyFinancialOperation({
@@ -250,9 +254,12 @@ export class ProcessWagerTransaction {
       balance: state.balance?.toJSON(),
       idempotentReplay: replay,
     };
-    if (state.status === "REJECTED" || state.status === "FAILED") {
+    if (
+      state.status === TransactionStatus.Rejected ||
+      state.status === TransactionStatus.Failed
+    ) {
       if (!state.failureCode)
-        throw new DomainError("INVALID_TRANSACTION_STATE");
+        throw new DomainError(FailureCode.InvalidTransactionState);
       return { ...base, status: state.status, failureCode: state.failureCode };
     }
     return { ...base, status: state.status };
@@ -308,20 +315,21 @@ export class ProcessWagerTransaction {
     | WagerTransactionRejected
     | WagerTransactionPendingReference {
     switch (transaction.status) {
-      case "PROCESSED":
+      case TransactionStatus.Processed:
         return WagerTransactionProcessed.create(eventProps);
-      case "REJECTED": {
+      case TransactionStatus.Rejected: {
         const failureCode = transaction.failureCode;
-        if (!failureCode) throw new DomainError("INVALID_TRANSACTION_STATE");
+        if (!failureCode)
+          throw new DomainError(FailureCode.InvalidTransactionState);
         return WagerTransactionRejected.create({
           ...eventProps,
           data: { ...eventProps.data, failureCode },
         });
       }
-      case "PENDING_REFERENCE":
+      case TransactionStatus.PendingReference:
         return WagerTransactionPendingReference.create(eventProps);
       default:
-        throw new DomainError("INVALID_TRANSACTION_STATE");
+        throw new DomainError(FailureCode.InvalidTransactionState);
     }
   }
 }

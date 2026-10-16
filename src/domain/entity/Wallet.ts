@@ -1,5 +1,5 @@
 import { Money } from "./Money";
-import { DomainError } from "./DomainError";
+import { DomainError, FailureCode } from "./DomainError";
 export type WalletState = {
   id: string;
   playerId: string;
@@ -16,7 +16,7 @@ export class Wallet {
     initialBalance: Money;
   }): Wallet {
     if (props.initialBalance.isNegative())
-      throw new DomainError("INVALID_INITIAL_BALANCE");
+      throw new DomainError(FailureCode.InvalidInitialBalance);
     return new Wallet({
       id: props.id,
       playerId: props.playerId,
@@ -54,13 +54,13 @@ export class Wallet {
   get updatedAt() {
     return new Date(this.state.updatedAt);
   }
-  debit(money: Money, code = "INSUFFICIENT_FUNDS"): void {
-    if (!money.isPositive()) throw new DomainError("INVALID_AMOUNT");
+  debit(money: Money, code: string = FailureCode.InsufficientFunds): void {
+    if (!money.isPositive()) throw new DomainError(FailureCode.InvalidAmount);
     if (this.balance.isLessThan(money)) throw new DomainError(code);
     this.change(this.balance.subtract(money));
   }
   credit(money: Money): void {
-    if (!money.isPositive()) throw new DomainError("INVALID_AMOUNT");
+    if (!money.isPositive()) throw new DomainError(FailureCode.InvalidAmount);
     this.change(this.balance.add(money));
   }
   private change(balance: Money): void {

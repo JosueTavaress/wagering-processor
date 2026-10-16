@@ -1,7 +1,9 @@
+import { QueueName } from "../src/infra/messaging/MessagingContract";
 import {
   CreateQueueCommand,
   GetQueueAttributesCommand,
   SetQueueAttributesCommand,
+  QueueAttributeName,
 } from "@aws-sdk/client-sqs";
 import { SqsBroker } from "../src/infra/messaging/SqsBroker";
 import { readRecoveryConfig } from "../src/infra/RecoveryConfig";
@@ -9,9 +11,9 @@ const config = readRecoveryConfig();
 const broker = new SqsBroker();
 try {
   for (const name of [
-    "wager-transactions-dlq.fifo",
-    "wager-events.fifo",
-    "wager-transactions.fifo",
+    QueueName.DeadLetters,
+    QueueName.Events,
+    QueueName.Transactions,
   ])
     await broker.client.send(
       new CreateQueueCommand({
@@ -26,13 +28,13 @@ try {
     );
   const dlq = await broker.client.send(
     new GetQueueAttributesCommand({
-      QueueUrl: await broker.url("wager-transactions-dlq.fifo"),
-      AttributeNames: ["QueueArn"],
+      QueueUrl: await broker.url(QueueName.DeadLetters),
+      AttributeNames: [QueueAttributeName.QueueArn],
     }),
   );
   await broker.client.send(
     new SetQueueAttributesCommand({
-      QueueUrl: await broker.url("wager-transactions.fifo"),
+      QueueUrl: await broker.url(QueueName.Transactions),
       Attributes: {
         RedrivePolicy: JSON.stringify({
           deadLetterTargetArn: dlq.Attributes?.QueueArn,

@@ -1,11 +1,14 @@
+import { FailureCode } from "../../domain/entity/DomainError";
 import { Type } from "@mikro-orm/core";
 export class ExactDecimalType extends Type<string, string> {
   override convertToDatabaseValue(value: string): string {
-    if (typeof value !== "string") throw new TypeError("MONEY_MUST_BE_STRING");
+    if (typeof value !== "string")
+      throw new TypeError(FailureCode.MoneyMustBeString);
     return value;
   }
   override convertToJSValue(value: string): string {
-    if (typeof value !== "string") throw new TypeError("MONEY_MUST_BE_STRING");
+    if (typeof value !== "string")
+      throw new TypeError(FailureCode.MoneyMustBeString);
     return value;
   }
   override compareAsType(): string {

@@ -91,14 +91,40 @@ export async function spawnApi(port: number) {
     stdout: "ignore",
     stderr: "pipe",
   });
-  await waitFor(async () => {
-    try {
-      return (await fetch(`http://localhost:${port}/health/live`)).ok;
-    } catch {
-      return false;
-    }
-  });
-  return p;
+  return waitForApi(p, port);
+}
+
+export async function waitForApi(
+  child: Bun.Subprocess<"ignore", "ignore", "pipe">,
+  port: number,
+  timeout = 20000,
+) {
+  const stderr = new Response(child.stderr).text();
+  try {
+    await waitFor(async () => {
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw new Error("API_EXITED_BEFORE_READY");
+      try {
+        return (
+          await fetch(`http://localhost:${port}/health/live`, {
+            signal: AbortSignal.timeout(1000),
+          })
+        ).ok;
+      } catch {
+        return false;
+      }
+    }, timeout);
+    return child;
+  } catch (error) {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
+    await child.exited;
+    const details = (await stderr).trim();
+    throw new Error(
+      `API_STARTUP_FAILED port=${port} exit=${child.exitCode} signal=${child.signalCode}${details ? `\n${details}` : ""}`,
+      { cause: error },
+    );
+  }
 }
 export function spawnWorker(role: string, extra: Record<string, string> = {}) {
   return Bun.spawn([process.execPath, "src/worker.ts"], {
