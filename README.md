@@ -43,7 +43,15 @@ Para rodar apenas concorrência:
 docker compose --profile test run --build --rm tests bun run test:concurrency
 ```
 
-A suíte cobre três APIs independentes, disputas por saldo e idempotência, créditos/débitos simultâneos, oito wallets, HTTP concorrendo com SQS, referências fora de ordem e recuperação de workers. Cada cenário novo verifica saldo, versão, continuidade e unicidade do ledger. O inventário e os limites estão em [docs/TESTING.md](docs/TESTING.md).
+A suíte cobre três APIs independentes, disputas por saldo e idempotência, créditos/débitos simultâneos, oito wallets, HTTP concorrendo com SQS, referências fora de ordem e recuperação de workers. Os cenários de concorrência verificam saldo, versão, continuidade e unicidade do ledger. A integração também verifica recuperação após cortes TCP de PostgreSQL e SQS. O inventário e os limites estão em [docs/TESTING.md](docs/TESTING.md).
+
+As suítes de integração, concorrência e caso de uso estão agrupadas por tema com `describe`, como idempotência, referências, leases da outbox e recuperação. A saída identifica o grupo e o cenário de cada teste.
+
+A suíte completa inclui typecheck; a formatação é verificada separadamente:
+
+```bash
+docker compose --profile test run --build --rm --no-deps tests bun run format:check
+```
 
 Os testes criam bancos e filas com nomes aleatórios e removem seus recursos ao concluir. O usuário de banco dos testes precisa de `CREATEDB`. O usuário inicial do Compose já possui essa capacidade. Os testes não usam o saldo das APIs do demo.
 
