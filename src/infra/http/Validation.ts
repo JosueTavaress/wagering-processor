@@ -1,3 +1,4 @@
+import { IdentifierMaxLength } from "./HttpContract";
 import { HttpErrorCode } from "./HttpContract";
 import { Currency, ZeroAmount } from "../../domain/entity/Money";
 import {
@@ -15,7 +16,7 @@ export const moneySchema = z
     currency: z.literal(Currency.BRL),
   })
   .strict();
-const identifier = z.string().min(1).max(200);
+const identifier = z.string().min(1).max(IdentifierMaxLength);
 export const commandSchema = z
   .object({
     providerId: identifier.refine((v) => v !== InternalProviderId),

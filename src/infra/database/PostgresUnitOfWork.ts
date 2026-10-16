@@ -12,6 +12,12 @@ import {
 import { InboxMessage } from "../../domain/entity/InboxMessage";
 import { DomainError, FailureCode } from "../../domain/entity/DomainError";
 import { telemetry, RetryComponent } from "../observability/Telemetry";
+const TransactionRetryPolicy = {
+  maxRetries: 3,
+  initialDelayMs: 25,
+  jitterMs: 25,
+} as const;
+
 const retryableTransactionCodes: ReadonlySet<string> = new Set([
   PostgresErrorCode.Deadlock,
   PostgresErrorCode.LockNotAvailable,
@@ -93,9 +99,12 @@ export class PostgresUnitOfWork implements UnitOfWork {
         const code = infrastructureErrorCode(error);
         if (retryableTransactionCodes.has(code ?? "")) {
           telemetry.locks.inc();
-          if (attempt < 3) {
+          if (attempt < TransactionRetryPolicy.maxRetries) {
             telemetry.retries.inc({ component: RetryComponent.Database });
-            await Bun.sleep(25 * 2 ** attempt + Math.random() * 25);
+            await Bun.sleep(
+              TransactionRetryPolicy.initialDelayMs * 2 ** attempt +
+                Math.random() * TransactionRetryPolicy.jitterMs,
+            );
             continue;
           }
         }

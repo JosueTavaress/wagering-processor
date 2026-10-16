@@ -1,3 +1,24 @@
+import { ReferenceRetryPolicy } from "../domain/entity/WagerTransaction";
+
+export const HeartbeatPolicy = {
+  millisecondsPerSecond: 1000,
+  renewalsPerLease: 3,
+  minIntervalMs: 100,
+  maxRequestTimeoutMs: 10000,
+} as const;
+
+const RecoveryDefaults = {
+  leaseSeconds: 30,
+  visibilitySeconds: 30,
+  maxReceiveCount: 5,
+} as const;
+
+const ServiceLimits = {
+  leaseSeconds: 86400,
+  visibilitySeconds: 43200,
+  maxReceiveCount: 1000,
+} as const;
+
 export const ProcessSignal = {
   Terminate: "SIGTERM",
   Interrupt: "SIGINT",
@@ -38,15 +59,33 @@ function positiveInteger(
 
 export function readRecoveryConfig(env: Environment = process.env) {
   return {
-    referenceTTL: positiveInteger(env, "REFERENCE_TTL_MS", 300000),
-    referenceAttempts: positiveInteger(env, "REFERENCE_MAX_ATTEMPTS", 10),
-    outboxLeaseSeconds: positiveInteger(env, "OUTBOX_LEASE_SECONDS", 30, 86400),
+    referenceTTL: positiveInteger(
+      env,
+      "REFERENCE_TTL_MS",
+      ReferenceRetryPolicy.defaultTtlMs,
+    ),
+    referenceAttempts: positiveInteger(
+      env,
+      "REFERENCE_MAX_ATTEMPTS",
+      ReferenceRetryPolicy.defaultMaxAttempts,
+    ),
+    outboxLeaseSeconds: positiveInteger(
+      env,
+      "OUTBOX_LEASE_SECONDS",
+      RecoveryDefaults.leaseSeconds,
+      ServiceLimits.leaseSeconds,
+    ),
     queueVisibilitySeconds: positiveInteger(
       env,
       "QUEUE_VISIBILITY_SECONDS",
-      30,
-      43200,
+      RecoveryDefaults.visibilitySeconds,
+      ServiceLimits.visibilitySeconds,
     ),
-    maxReceiveCount: positiveInteger(env, "MAX_RECEIVE_COUNT", 5, 1000),
+    maxReceiveCount: positiveInteger(
+      env,
+      "MAX_RECEIVE_COUNT",
+      RecoveryDefaults.maxReceiveCount,
+      ServiceLimits.maxReceiveCount,
+    ),
   };
 }

@@ -10,6 +10,7 @@ import { Money } from "../../domain/entity/Money";
 import { Wallet } from "../../domain/entity/Wallet";
 import {
   WagerTransaction,
+  ReferenceRetryPolicy,
   TransactionStatus,
 } from "../../domain/entity/WagerTransaction";
 import { WalletLedgerEntry } from "../../domain/entity/WalletLedgerEntry";
@@ -35,8 +36,8 @@ type TransactionWork = {
 export class ProcessWagerTransaction {
   constructor(
     private readonly uow: UnitOfWork,
-    private readonly referenceTTL = 300000,
-    private readonly referenceAttempts = 10,
+    private readonly referenceTTL: number = ReferenceRetryPolicy.defaultTtlMs,
+    private readonly referenceAttempts: number = ReferenceRetryPolicy.defaultMaxAttempts,
   ) {}
   async execute(
     input: ProcessWagerTransactionInput,

@@ -10,6 +10,7 @@ import {
 import { OutboxMessage } from "../../domain/entity/OutboxMessage";
 import {
   readRecoveryConfig,
+  HeartbeatPolicy,
   RuntimeEnvironment,
   ProcessSignal,
 } from "../RecoveryConfig";
@@ -134,7 +135,11 @@ export class OutboxPublisher {
             lost = true;
           });
       },
-      Math.max(100, (leaseSeconds * 1000) / 3),
+      Math.max(
+        HeartbeatPolicy.minIntervalMs,
+        (leaseSeconds * HeartbeatPolicy.millisecondsPerSecond) /
+          HeartbeatPolicy.renewalsPerLease,
+      ),
     );
     return {
       isLost: () => lost,

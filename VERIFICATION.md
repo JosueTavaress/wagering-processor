@@ -2,7 +2,7 @@
 
 **Suíte completa aprovada em 16/10/2026: typecheck e 216 testes, sem falhas.**
 
-A execução inclui a centralização das strings compartilhadas e a correção da inicialização HTTP no Bun. Os três cenários HTTP que falharam na tentativa anterior passaram nesta rodada.
+A execução em containers, com rebuild, inclui a refatoração dos números mágicos em constantes e políticas nomeadas. O resultado foi confirmado pelo log enviado pelo autor: 170 testes de unidade, 22 de integração e 24 de concorrência, sem falhas.
 
 | Verificação                     | Resultado                              |
 | ------------------------------- | -------------------------------------- |

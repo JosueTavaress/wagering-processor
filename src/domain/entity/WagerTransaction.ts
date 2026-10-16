@@ -1,6 +1,13 @@
 import { LedgerDirection } from "./WalletLedgerEntry";
 import { Money } from "./Money";
 import { DomainError, FailureCode } from "./DomainError";
+export const ReferenceRetryPolicy = {
+  defaultTtlMs: 300000,
+  defaultMaxAttempts: 10,
+  initialDelayMs: 1000,
+  maxDelayMs: 60000,
+} as const;
+
 export const InternalProviderId = "__internal__";
 export const OpeningContextId = "opening";
 
@@ -167,7 +174,11 @@ export class WagerTransaction {
     this.state.balance = balance;
     this.state.attempts++;
     this.state.nextAttemptAt = new Date(
-      now.getTime() + Math.min(60000, 1000 * 2 ** (this.state.attempts - 1)),
+      now.getTime() +
+        Math.min(
+          ReferenceRetryPolicy.maxDelayMs,
+          ReferenceRetryPolicy.initialDelayMs * 2 ** (this.state.attempts - 1),
+        ),
     );
   }
   reject(code: string, balance: Money): void {

@@ -1,6 +1,12 @@
 import { TransactionStatus } from "../../domain/entity/WagerTransaction";
-import { HttpHeader, HealthStatus } from "./HttpContract";
 import {
+  IdentifierMaxLength,
+  LedgerPagination,
+  HttpHeader,
+  HealthStatus,
+} from "./HttpContract";
+import {
+  HttpStatus,
   Controller,
   Get,
   Post,
@@ -20,11 +26,11 @@ import { ApplicationToken } from "../composition";
 import { commandSchema, openWalletSchema, uuid } from "./Validation";
 import { telemetry, LogEvent } from "../observability/Telemetry";
 const wagerHttpStatus = {
-  [TransactionStatus.Processed]: 200,
-  [TransactionStatus.Pending]: 202,
-  [TransactionStatus.PendingReference]: 202,
-  [TransactionStatus.Rejected]: 422,
-  [TransactionStatus.Failed]: 500,
+  [TransactionStatus.Processed]: HttpStatus.OK,
+  [TransactionStatus.Pending]: HttpStatus.ACCEPTED,
+  [TransactionStatus.PendingReference]: HttpStatus.ACCEPTED,
+  [TransactionStatus.Rejected]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [TransactionStatus.Failed]: HttpStatus.INTERNAL_SERVER_ERROR,
 } satisfies Record<ProcessWagerTransactionOutput["status"], number>;
 
 @Controller()
@@ -45,8 +51,8 @@ export class ApiController {
       .number()
       .int()
       .min(1)
-      .max(100)
-      .parse(rawLimit ?? "50");
+      .max(LedgerPagination.maxLimit)
+      .parse(rawLimit ?? LedgerPagination.defaultLimit);
     return this.app.getLedger.execute({ walletId: uuid(id), cursor, limit });
   }
   @Get("wagering/transactions/:transactionId") async transaction(
@@ -75,7 +81,8 @@ export class ApiController {
       ...z.record(z.unknown()).parse(body),
       idempotencyKey: key,
     });
-    const correlationId = correlation?.slice(0, 200) || randomUUID();
+    const correlationId =
+      correlation?.slice(0, IdentifierMaxLength) || randomUUID();
     res.locals.correlationId = correlationId;
     await this.app.identity.assertProvider(input.providerId, authorization);
     const stop = telemetry.latency.startTimer();
@@ -103,7 +110,7 @@ export class ApiController {
     @Param("walletId") id: string,
     @Res({ passthrough: true }) res: Response,
   ) {
-    res.status(200);
+    res.status(HttpStatus.OK);
     return this.app.reconcile.execute({ walletId: uuid(id) });
   }
   @Get("health/live") live() {
@@ -115,7 +122,7 @@ export class ApiController {
       await this.app.broker.ready();
       return { status: HealthStatus.Ready };
     } catch {
-      res.status(503);
+      res.status(HttpStatus.SERVICE_UNAVAILABLE);
       return { status: HealthStatus.NotReady };
     }
   }

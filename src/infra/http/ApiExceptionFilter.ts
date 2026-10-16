@@ -1,5 +1,6 @@
-import { HttpErrorCode, HttpHeader } from "./HttpContract";
+import { IdentifierMaxLength, HttpErrorCode, HttpHeader } from "./HttpContract";
 import {
+  HttpStatus,
   Catch,
   ExceptionFilter,
   ArgumentsHost,
@@ -16,25 +17,28 @@ import {
 } from "../InfrastructureError";
 import { telemetry, LogEvent } from "../observability/Telemetry";
 const domainHttpStatus: Readonly<Record<string, number>> = {
-  [FailureCode.WalletNotFound]: 404,
-  [FailureCode.TransactionNotFound]: 404,
-  [FailureCode.IdempotencyConflict]: 409,
-  [FailureCode.UniquenessConflict]: 409,
-  [FailureCode.InboxConflict]: 409,
-  [FailureCode.InvalidCursor]: 400,
+  [FailureCode.WalletNotFound]: HttpStatus.NOT_FOUND,
+  [FailureCode.TransactionNotFound]: HttpStatus.NOT_FOUND,
+  [FailureCode.IdempotencyConflict]: HttpStatus.CONFLICT,
+  [FailureCode.UniquenessConflict]: HttpStatus.CONFLICT,
+  [FailureCode.InboxConflict]: HttpStatus.CONFLICT,
+  [FailureCode.InvalidCursor]: HttpStatus.BAD_REQUEST,
 };
 
 type HttpFailure = { status: number; code: string };
 
 function classifyHttpError(error: unknown): HttpFailure {
   if (error instanceof ZodError)
-    return { status: 400, code: HttpErrorCode.InvalidPayload };
+    return {
+      status: HttpStatus.BAD_REQUEST,
+      code: HttpErrorCode.InvalidPayload,
+    };
 
   if (error instanceof DomainError)
     return {
       status: error.isProgrammingError()
-        ? 500
-        : (domainHttpStatus[error.code] ?? 422),
+        ? HttpStatus.INTERNAL_SERVER_ERROR
+        : (domainHttpStatus[error.code] ?? HttpStatus.UNPROCESSABLE_ENTITY),
       code: error.code,
     };
 
@@ -42,18 +46,26 @@ function classifyHttpError(error: unknown): HttpFailure {
     return {
       status: error.getStatus(),
       code:
-        error.getStatus() === 400
+        error.getStatus() === HttpStatus.BAD_REQUEST
           ? HttpErrorCode.InvalidPayload
           : HttpErrorCode.HttpError,
     };
 
   return isTransientInfrastructureError(error)
-    ? { status: 503, code: HttpErrorCode.InfrastructureUnavailable }
-    : { status: 500, code: HttpErrorCode.InternalError };
+    ? {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        code: HttpErrorCode.InfrastructureUnavailable,
+      }
+    : {
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        code: HttpErrorCode.InternalError,
+      };
 }
 
 function identifier(value: unknown): string | undefined {
-  return typeof value === "string" ? value.slice(0, 200) : undefined;
+  return typeof value === "string"
+    ? value.slice(0, IdentifierMaxLength)
+    : undefined;
 }
 
 function requestIdentifiers(request: Request, response: Response) {
@@ -88,9 +100,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
     );
     const { status, code } = classifyHttpError(error);
 
-    if (status >= 500) {
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       telemetry.log(
-        status === 503
+        status === HttpStatus.SERVICE_UNAVAILABLE
           ? LogEvent.HttpInfrastructureError
           : LogEvent.HttpInternalError,
         {
@@ -101,7 +113,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
         },
       );
     }
-    if (status === 503) response.setHeader(HttpHeader.RetryAfter, "1");
-    response.status(status).json({ code, retryable: status === 503 });
+    if (status === HttpStatus.SERVICE_UNAVAILABLE)
+      response.setHeader(HttpHeader.RetryAfter, "1");
+    response
+      .status(status)
+      .json({ code, retryable: status === HttpStatus.SERVICE_UNAVAILABLE });
   }
 }

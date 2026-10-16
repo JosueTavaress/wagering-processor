@@ -20,6 +20,7 @@ import { messageSchema } from "../http/Validation";
 import { hash } from "../../application/process-wager-transaction/CanonicalPayload";
 import {
   readRecoveryConfig,
+  HeartbeatPolicy,
   RuntimeEnvironment,
   ProcessSignal,
 } from "../RecoveryConfig";
@@ -29,6 +30,12 @@ import {
   LogEvent,
   RetryComponent,
 } from "../observability/Telemetry";
+const ConsumerPolicy = {
+  messagesPerPoll: 1,
+  pollWaitSeconds: 2,
+  maxRetryDelaySeconds: 60,
+} as const;
+
 export class WagerConsumer {
   private readonly config = readRecoveryConfig();
   constructor(
@@ -54,8 +61,8 @@ export class WagerConsumer {
     const response = await this.broker.client.send(
       new ReceiveMessageCommand({
         QueueUrl: url,
-        MaxNumberOfMessages: 1,
-        WaitTimeSeconds: 2,
+        MaxNumberOfMessages: ConsumerPolicy.messagesPerPoll,
+        WaitTimeSeconds: ConsumerPolicy.pollWaitSeconds,
         VisibilityTimeout: this.config.queueVisibilitySeconds,
         MessageSystemAttributeNames: [
           MessageSystemAttributeName.ApproximateReceiveCount,
@@ -170,7 +177,10 @@ export class WagerConsumer {
           new ChangeMessageVisibilityCommand({
             QueueUrl: url,
             ReceiptHandle: receipt,
-            VisibilityTimeout: Math.min(60, 2 ** attempts),
+            VisibilityTimeout: Math.min(
+              ConsumerPolicy.maxRetryDelaySeconds,
+              2 ** attempts,
+            ),
           }),
         );
       }
@@ -186,7 +196,13 @@ export class WagerConsumer {
     messageId?: string,
   ) {
     const visibility = this.config.queueVisibilitySeconds;
-    const intervalMs = Math.max(100, Math.floor((visibility * 1000) / 3));
+    const intervalMs = Math.max(
+      HeartbeatPolicy.minIntervalMs,
+      Math.floor(
+        (visibility * HeartbeatPolicy.millisecondsPerSecond) /
+          HeartbeatPolicy.renewalsPerLease,
+      ),
+    );
     let stopped = false;
     let inFlight: Promise<void> | undefined;
     const timer = setInterval(() => {
@@ -195,7 +211,7 @@ export class WagerConsumer {
       const controller = new AbortController();
       const timeout = setTimeout(
         () => controller.abort(),
-        Math.min(10000, intervalMs),
+        Math.min(HeartbeatPolicy.maxRequestTimeoutMs, intervalMs),
       );
       inFlight = (async () => {
         await this.broker.client.send(

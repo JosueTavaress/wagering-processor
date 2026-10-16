@@ -5,6 +5,9 @@ export const Currency = {
   EUR: "EUR",
 } as const;
 
+const DecimalPlaces = 2;
+const CentsPerUnit = 100n;
+
 const supportedCurrencies: readonly string[] = Object.values(Currency);
 export const ZeroAmount = "0.00";
 export type MoneyProps = { amount: string; currency: string };
@@ -26,7 +29,8 @@ export class Money {
       .replace("-", "")
       .split(".");
     return new Money(
-      (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"))) *
+      (BigInt(whole) * CentsPerUnit +
+        BigInt(fraction.padEnd(DecimalPlaces, "0"))) *
         (negative ? -1n : 1n),
       props.currency,
     );
@@ -67,7 +71,7 @@ export class Money {
   }
   toString(): string {
     const abs = this.cents < 0n ? -this.cents : this.cents;
-    return `${this.cents < 0n ? "-" : ""}${abs / 100n}.${(abs % 100n).toString().padStart(2, "0")}`;
+    return `${this.cents < 0n ? "-" : ""}${abs / CentsPerUnit}.${(abs % CentsPerUnit).toString().padStart(DecimalPlaces, "0")}`;
   }
   toJSON(): MoneyProps {
     return { amount: this.toString(), currency: this.currency };

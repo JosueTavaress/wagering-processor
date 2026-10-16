@@ -7,6 +7,12 @@ import { WagerConsumer } from "./infra/workers/WagerConsumer";
 import { OutboxPublisher } from "./infra/workers/OutboxPublisher";
 import { ReferenceWorker } from "./infra/workers/ReferenceWorker";
 import { telemetry, LogEvent } from "./infra/observability/Telemetry";
+const PollIntervalMs = {
+  [WorkerRole.Consumer]: 25,
+  [WorkerRole.Publisher]: 100,
+  [WorkerRole.Reference]: 500,
+} as const;
+
 const app = await compose();
 const role = process.env.WORKER_ROLE ?? WorkerRole.All;
 let stopping = false;
@@ -65,15 +71,33 @@ async function loop(name: string, tick: () => Promise<number>, delay: number) {
 const tasks: Promise<void>[] = [];
 if (role === WorkerRole.All || role === WorkerRole.Consumer) {
   const worker = new WagerConsumer(app.broker, app.process, app.db);
-  tasks.push(loop(WorkerRole.Consumer, () => worker.tick(), 25));
+  tasks.push(
+    loop(
+      WorkerRole.Consumer,
+      () => worker.tick(),
+      PollIntervalMs[WorkerRole.Consumer],
+    ),
+  );
 }
 if (role === WorkerRole.All || role === WorkerRole.Publisher) {
   const worker = new OutboxPublisher(app.db, app.broker);
-  tasks.push(loop(WorkerRole.Publisher, () => worker.tick(), 100));
+  tasks.push(
+    loop(
+      WorkerRole.Publisher,
+      () => worker.tick(),
+      PollIntervalMs[WorkerRole.Publisher],
+    ),
+  );
 }
 if (role === WorkerRole.All || role === WorkerRole.Reference) {
   const worker = new ReferenceWorker(app.db, app.process);
-  tasks.push(loop(WorkerRole.Reference, () => worker.tick(), 500));
+  tasks.push(
+    loop(
+      WorkerRole.Reference,
+      () => worker.tick(),
+      PollIntervalMs[WorkerRole.Reference],
+    ),
+  );
 }
 telemetry.log(LogEvent.WorkerStarted, { role });
 await Promise.all(tasks);

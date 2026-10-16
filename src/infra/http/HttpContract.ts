@@ -1,3 +1,6 @@
+export const IdentifierMaxLength = 200;
+export const LedgerPagination = { defaultLimit: 50, maxLimit: 100 } as const;
+
 export const HttpMethod = {
   Post: "POST",
 } as const;

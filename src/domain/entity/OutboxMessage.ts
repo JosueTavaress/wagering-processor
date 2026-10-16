@@ -1,4 +1,10 @@
 import { IntegrationEvent } from "../event/IntegrationEvent";
+const RetryPolicy = {
+  baseDelayMs: 1000,
+  maxDelayMs: 60000,
+  maxExponent: 6,
+} as const;
+
 export type OutboxState = {
   id: string;
   aggregateId: string;
@@ -53,7 +59,11 @@ export class OutboxMessage {
     this.state.attempts++;
     this.state.nextAttemptAt = new Date(
       now.getTime() +
-        Math.min(60000, 1000 * 2 ** Math.min(this.state.attempts, 6)),
+        Math.min(
+          RetryPolicy.maxDelayMs,
+          RetryPolicy.baseDelayMs *
+            2 ** Math.min(this.state.attempts, RetryPolicy.maxExponent),
+        ),
     );
   }
 }
