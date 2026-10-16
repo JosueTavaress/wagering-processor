@@ -1,0 +1,93 @@
+x-app: &app
+  build: .
+  environment: &env
+    DATABASE_URL: postgresql://wager:wager@postgres:5432/wager
+    SQS_ENDPOINT: http://localstack:4566
+    AWS_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+  init: true
+  stop_grace_period: 60s
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    queues:
+      condition: service_completed_successfully
+services:
+  postgres:
+    image: postgres:16.8-alpine
+    environment:
+      POSTGRES_USER: wager
+      POSTGRES_PASSWORD: wager
+      POSTGRES_DB: wager
+    ports: ["5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wager -d wager"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  localstack:
+    image: localstack/localstack:4.2.0
+    environment:
+      SERVICES: sqs
+      SQS_ENDPOINT_STRATEGY: path
+    ports: ["4566:4566"]
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues >/dev/null"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  migrate:
+    build: .
+    environment: *env
+    command: ["bun", "run", "migrate"]
+    depends_on:
+      postgres: { condition: service_healthy }
+  queues:
+    build: .
+    environment: *env
+    command: ["bun", "run", "queues"]
+    depends_on:
+      localstack: { condition: service_healthy }
+  api:
+    <<: *app
+    ports: ["3000:3000"]
+  api2:
+    <<: *app
+    ports: ["3001:3000"]
+  api3:
+    <<: *app
+    ports: ["3002:3000"]
+  consumer:
+    <<: *app
+    command: ["bun", "src/worker.ts"]
+    environment:
+      <<: *env
+      WORKER_ROLE: consumer
+    deploy:
+      replicas: 3
+  publisher:
+    <<: *app
+    command: ["bun", "src/worker.ts"]
+    environment:
+      <<: *env
+      WORKER_ROLE: publisher
+    deploy:
+      replicas: 2
+  reference:
+    <<: *app
+    command: ["bun", "src/worker.ts"]
+    environment:
+      <<: *env
+      WORKER_ROLE: reference
+  tests:
+    <<: *app
+    profiles: ["test"]
+    command: ["bun", "run", "test:all"]
+    environment:
+      <<: *env
+      NODE_ENV: test
+      TEST_DATABASE_URL: postgresql://wager:wager@postgres:5432/wager_test
+volumes:
+  postgres-data:

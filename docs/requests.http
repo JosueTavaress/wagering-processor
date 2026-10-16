@@ -1,0 +1,47 @@
+@baseUrl = http://localhost:3000
+@walletId = COLE_O_ID_DA_WALLET_CRIADA
+@transactionId = COLE_O_ID_DA_TRANSACAO
+
+### Abrir wallet — use outro playerId se executar novamente
+POST {{baseUrl}}/wallets
+Content-Type: application/json
+
+{
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "initialBalance": {"amount": "100.00", "currency": "BRL"}
+}
+
+### Apostar — repetir com a mesma chave retorna replay
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:bet-demo
+X-Correlation-Id: demonstration
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "bet-demo",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-demo",
+  "gameId": "game-demo",
+  "kind": "BET",
+  "money": {"amount": "80.00", "currency": "BRL"}
+}
+
+### Consulta
+GET {{baseUrl}}/wagering/transactions/{{transactionId}}
+
+### Consulta por provedor
+GET {{baseUrl}}/providers/provider-a/wagering/transactions/bet-demo
+
+### Ledger
+GET {{baseUrl}}/wallets/{{walletId}}/ledger?limit=50
+
+### Reconciliar
+POST {{baseUrl}}/wallets/{{walletId}}/reconciliation
+
+### Health
+GET {{baseUrl}}/health/ready
+
+### Métricas
+GET {{baseUrl}}/metrics

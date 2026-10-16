@@ -1,0 +1,11 @@
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "transaction-123",
+  "idempotencyKey": "provider-a:transaction-123",
+  "walletId": "00000000-0000-4000-8000-000000000001",
+  "playerId": "00000000-0000-4000-8000-000000000002",
+  "roundId": "round-987",
+  "gameId": "fortune-chimp",
+  "kind": "BET",
+  "money": {"amount": "25.00", "currency": "BRL"}
+}

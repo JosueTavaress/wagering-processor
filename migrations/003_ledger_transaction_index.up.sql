@@ -1,0 +1,1 @@
+CREATE INDEX wallet_ledger_transaction_lookup ON wallet_ledger(transaction_id);
