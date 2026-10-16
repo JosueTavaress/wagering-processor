@@ -305,7 +305,7 @@ test("transient database failure retries and then succeeds", async () => {
   const consumer = new WagerConsumer(app.broker, app.process, app.db);
   const restoreDatabase = await interruptTransactionInDatabase();
   try {
-    await consumer.tick();
+    expect(await consumer.tick()).toBe(1);
   } finally {
     await restoreDatabase();
   }
@@ -318,11 +318,55 @@ test("transient database failure retries and then succeeds", async () => {
       { count: string }[]
     >("select count(*)::text count from inbox where message_id=?", [messageId]);
   expect(inbox[0]!.count).toBe("0");
-  await Bun.sleep(2200);
-  await consumer.tick();
+  const transactionsBeforeRetry = await app.db.em
+    .fork()
+    .execute(
+      "select id from wager_transactions where provider_id=? and external_transaction_id=?",
+      [bet.providerId, bet.externalTransactionId],
+    );
+  expect(transactionsBeforeRetry).toHaveLength(0);
+
+  // A poll can be empty even after visibility expires. Observe committed recovery.
+  await waitFor(async () => {
+    await consumer.tick();
+    const current = await app.getWallet.execute({ walletId: wallet.id });
+    return current.balance.amount === "90.00";
+  });
   expect(
     (await app.getWallet.execute({ walletId: wallet.id })).balance.amount,
   ).toBe("90.00");
+  const entries = await app.db.em.fork().execute<
+    {
+      status: string;
+      direction: string;
+      amount: string;
+    }[]
+  >(
+    `select t.status,l.direction,l.amount::text amount
+     from wager_transactions t join wallet_ledger l on l.transaction_id=t.id
+     where t.provider_id=? and t.external_transaction_id=?`,
+    [bet.providerId, bet.externalTransactionId],
+  );
+  expect(entries).toEqual([
+    { status: "PROCESSED", direction: "DEBIT", amount: "10.00" },
+  ]);
+  const completedInbox = await app.db.em
+    .fork()
+    .execute<
+      { processed_at: Date | null }[]
+    >("select processed_at from inbox where message_id=?", [messageId]);
+  expect(completedInbox).toHaveLength(1);
+  expect(completedInbox[0]!.processed_at).not.toBeNull();
+  const events = await app.db.em.fork().execute<{ event_type: string }[]>(
+    `select o.event_type from outbox o join wager_transactions t
+     on o.payload->'data'->>'transactionId'=t.id::text
+     where t.provider_id=? and t.external_transaction_id=? order by o.event_type`,
+    [bet.providerId, bet.externalTransactionId],
+  );
+  expect(events.map((event) => event.event_type)).toEqual([
+    "WagerTransactionProcessed",
+    "WalletBalanceChanged",
+  ]);
   await consistent(app, wallet.id);
 });
 

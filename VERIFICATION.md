@@ -13,9 +13,9 @@ Resultado da execução com rebuild realizada pelo autor no Ubuntu/WSL e enviada
 | **Total**                     | **227 passaram · 0 falhas**              |
 | Formatação                    | Aprovada separadamente em execução local |
 
-Ambiente: Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0. A execução inclui a métrica da DLQ independente do consumo, o heartbeat sem renovações acumuladas, o cancelamento SQL de renovação bloqueada e a proteção contra confirmação/retry pelo antigo proprietário do lease.
+Ambiente: Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0. A execução valida o código atual, incluindo o teste de recuperação após falha transitória: polls com prazo limitado até o commit, saldo esperado, débito único, inbox concluída e eventos. Também passaram os cenários de heartbeat, cancelamento SQL e recuperação dos publishers.
 
-Os critérios de verificação definidos para este fechamento foram satisfeitos. As limitações de escala e rede continuam documentadas em ARCHITECTURE.md.
+A saída completa desta execução foi enviada pelo autor na conversa; não está sendo atribuída a um arquivo de log local sem conferência. As limitações de escala e rede continuam documentadas em ARCHITECTURE.md.
 
 ## Como repetir
 

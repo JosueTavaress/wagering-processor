@@ -1,5 +1,7 @@
 # Estratégia de testes
 
+**Estado atual:** typecheck e 227 testes aprovados na execução com rebuild enviada pelo autor, incluindo a sincronização corrigida do teste de retry; consulte VERIFICATION.md.
+
 O objetivo é demonstrar que cada operação financeira tem um único efeito, mesmo quando requisições competem entre processos ou transportes. As suítes de integração e concorrência usam PostgreSQL e LocalStack reais; recusam iniciar se esses serviços não estiverem disponíveis.
 
 ## Executar
@@ -130,3 +132,7 @@ Os seis testes de `test/unit/outbox-heartbeat.test.ts` controlam os disparos do 
 A integração verifica ambos os caminhos do proprietário antigo: confirmação e reagendamento após outro publisher assumir. Um novo cenário mantém a linha bloqueada, observa a renovação bloqueada em `pg_stat_activity` e exige que o PostgreSQL cancele a instrução antes da liberação do lock. Depois confere o estado intacto e a recuperação por outro publisher. O teste de crash entre envio e confirmação permanece na suíte de concorrência.
 
 Typecheck, 179 testes de unidade, 24 de integração e 24 de concorrência passaram na execução completa com rebuild enviada pelo autor. O cenário de cancelamento SQL foi executado com PostgreSQL real, conforme VERIFICATION.md.
+
+## Sincronização da reentrega após falha transitória
+
+O teste preserva a falha SQL real com código 08006 e verifica o rollback (saldo 100.00, ausência de transação e inbox). Após remover a falha, usa o prazo já existente de `waitFor` para fazer polls até observar saldo 90.00. Não aumenta o timeout nem supõe que o primeiro poll após o backoff necessariamente entregue a mensagem. Confere uma transação processada, um único débito de 10.00, inbox concluída, os dois eventos esperados e reconciliação consistente. O cenário passou na nova execução com PostgreSQL/SQS reais, incluindo as assertions reforçadas.
