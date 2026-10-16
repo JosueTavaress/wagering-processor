@@ -24,6 +24,10 @@ import {
   RuntimeEnvironment,
   ProcessSignal,
 } from "../RecoveryConfig";
+import {
+  infrastructureErrorCode,
+  UnknownErrorCode,
+} from "../InfrastructureError";
 import { classifyConsumerFailure } from "./ConsumerFailure";
 import {
   telemetry,
@@ -31,6 +35,8 @@ import {
   RetryComponent,
 } from "../observability/Telemetry";
 const ConsumerPolicy = {
+  dlqMetricIntervalMs: 30000,
+  dlqMetricTimeoutMs: 1000,
   messagesPerPoll: 1,
   pollWaitSeconds: 2,
   maxRetryDelaySeconds: 60,
@@ -38,25 +44,15 @@ const ConsumerPolicy = {
 
 export class WagerConsumer {
   private readonly config = readRecoveryConfig();
+  private nextDlqMetricAt = 0;
+  private dlqMetricInFlight = false;
   constructor(
     private readonly broker: SqsBroker,
     private readonly process: ProcessWagerTransaction,
     private readonly db: Database,
   ) {}
   async tick() {
-    const stats = await this.broker.client.send(
-      new GetQueueAttributesCommand({
-        QueueUrl: await this.broker.url(QueueName.DeadLetters),
-        AttributeNames: [
-          QueueAttributeName.ApproximateNumberOfMessages,
-          QueueAttributeName.ApproximateNumberOfMessagesNotVisible,
-        ],
-      }),
-    );
-    telemetry.dlqDepth.set(
-      Number(stats.Attributes?.ApproximateNumberOfMessages ?? 0) +
-        Number(stats.Attributes?.ApproximateNumberOfMessagesNotVisible ?? 0),
-    );
+    void this.refreshDlqDepthIfDue();
     const url = await this.broker.url(QueueName.Transactions);
     const response = await this.broker.client.send(
       new ReceiveMessageCommand({
@@ -73,6 +69,36 @@ export class WagerConsumer {
       await this.handle(url, message);
     return response.Messages?.length ?? 0;
   }
+  private async refreshDlqDepthIfDue(): Promise<void> {
+    if (this.dlqMetricInFlight || Date.now() < this.nextDlqMetricAt) return;
+    this.dlqMetricInFlight = true;
+    this.nextDlqMetricAt = Date.now() + ConsumerPolicy.dlqMetricIntervalMs;
+    try {
+      const stats = await this.broker.client.send(
+        new GetQueueAttributesCommand({
+          QueueUrl: await this.broker.url(QueueName.DeadLetters),
+          AttributeNames: [
+            QueueAttributeName.ApproximateNumberOfMessages,
+            QueueAttributeName.ApproximateNumberOfMessagesNotVisible,
+          ],
+        }),
+        { abortSignal: AbortSignal.timeout(ConsumerPolicy.dlqMetricTimeoutMs) },
+      );
+      telemetry.dlqDepth.set(
+        Number(stats.Attributes?.ApproximateNumberOfMessages ?? 0) +
+          Number(stats.Attributes?.ApproximateNumberOfMessagesNotVisible ?? 0),
+      );
+    } catch (error) {
+      telemetry.log(LogEvent.DlqMetricFailed, {
+        errorCode:
+          infrastructureErrorCode(error) ??
+          (error instanceof Error ? error.name : UnknownErrorCode),
+      });
+    } finally {
+      this.dlqMetricInFlight = false;
+    }
+  }
+
   private async handle(url: string, message: Message) {
     const receipt = message.ReceiptHandle;
     if (!receipt) return;

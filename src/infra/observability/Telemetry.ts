@@ -22,6 +22,7 @@ export const LogEvent = {
   OutboxRetry: "outbox_retry",
   WagerConsumed: "wager_consumed",
   WagerDeadLetter: "wager_dead_letter",
+  DlqMetricFailed: "dlq_metric_failed",
   WagerRetry: "wager_retry",
   VisibilityExtensionFailed: "visibility_extension_failed",
   WorkerRetry: "worker_retry",

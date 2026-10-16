@@ -87,6 +87,8 @@ Rejeições carregam códigos estáveis:
 
 Reenviar uma rejeição com a mesma chave preserva o resultado. Payload corrigido representa uma nova operação, com nova identidade. Em falhas transitórias, a mesma chave deve ser reutilizada.
 
+A profundidade da DLQ é coletada em segundo plano, no máximo a cada 30 segundos por consumidor, sem consultas sobrepostas. Falhas preservam a última amostra e geram log, sem impedir o consumo. A chamada de atributos tem timeout de um segundo.
+
 Logs JSON carregam os identificadores disponíveis, sem payload financeiro completo. Métricas cobrem status, duplicatas, retries, DLQ, conflitos de lock, atraso da outbox, latência e divergências. Liveness verifica o processo; readiness verifica PostgreSQL e SQS. O ledger usa cursor base64url de wallet/sequence, com paginação por sequência e validação do intervalo bigint.
 
 ## Configuração de recuperação
