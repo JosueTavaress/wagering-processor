@@ -1,21 +1,23 @@
 # Verificação
 
-**Typecheck e 227 testes aprovados em containers em 16/10/2026, sem falhas.**
+**Typecheck e 229 testes aprovados em containers em 16/10/2026, sem falhas.**
 
 Resultado da execução com rebuild realizada pelo autor no Ubuntu/WSL e enviada nesta revisão:
 
-| Verificação                   | Resultado                                |
-| ----------------------------- | ---------------------------------------- |
-| Typecheck                     | Aprovado                                 |
-| Unidade                       | 179 passaram · 0 falhas                  |
-| Integração com PostgreSQL/SQS | 24 passaram · 0 falhas                   |
-| Concorrência entre processos  | 24 passaram · 0 falhas                   |
-| **Total**                     | **227 passaram · 0 falhas**              |
-| Formatação                    | Aprovada separadamente em execução local |
+| Verificação                   | Resultado                                              |
+| ----------------------------- | ------------------------------------------------------ |
+| Typecheck                     | Aprovado                                               |
+| Unidade                       | 179 passaram · 0 falhas                                |
+| Integração com PostgreSQL/SQS | 26 passaram · 0 falhas                                 |
+| Concorrência entre processos  | 24 passaram · 0 falhas                                 |
+| **Total**                     | **229 passaram · 0 falhas**                            |
+| Carga                         | Experimento implementado; sem resultados de desempenho |
 
-Ambiente: Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0. A execução valida o código atual, incluindo o teste de recuperação após falha transitória: polls com prazo limitado até o commit, saldo esperado, débito único, inbox concluída e eventos. Também passaram os cenários de heartbeat, cancelamento SQL e recuperação dos publishers.
+Ambiente: Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0. A integração inclui os dois cenários de corte de conexão TCP: PostgreSQL indisponível durante reentregas sem débito duplicado e SQS indisponível durante retries da outbox, com publicação após recuperação. Os logs de falha e retry desses cenários fazem parte da execução esperada.
 
-A saída completa desta execução foi enviada pelo autor na conversa; não está sendo atribuída a um arquivo de log local sem conferência. As limitações de escala e rede continuam documentadas em ARCHITECTURE.md.
+A saída completa foi enviada pelo autor na conversa; não está sendo atribuída a um arquivo de log local. A tentativa anterior de Docker neste ambiente não teve acesso ao socket; a execução posterior enviada pelo autor comprova a suíte completa.
+
+O experimento `bun run test:load` permanece sem execução validada: a tentativa local falhou antes da carga por `ECONNREFUSED 127.0.0.1:5432`. Não há números de throughput ou percentis aprovados; execute conforme [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md).
 
 ## Como repetir
 

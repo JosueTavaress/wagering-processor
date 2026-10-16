@@ -2,7 +2,7 @@
 
 Processador financeiro de apostas com Bun, NestJS, PostgreSQL, MikroORM e SQS/LocalStack. Código organizado em `domain`, `application` e `infra`, com Input/Output separados por caso de uso.
 
-**Verificação:** typecheck e 227 testes aprovados em containers no Ubuntu/WSL em 16/10/2026: 179 de unidade, 24 de integração e 24 de concorrência, sem falhas. A formatação foi aprovada separadamente em execução local. Consulte [VERIFICATION.md](VERIFICATION.md) para os resultados e [docs/TESTING.md](docs/TESTING.md) para a cobertura.
+**Verificação:** typecheck e 229 testes aprovados em containers no Ubuntu/WSL em 16/10/2026: 179 de unidade, 26 de integração e 24 de concorrência, sem falhas. Inclui os dois cenários de corte de conexão TCP. O experimento de carga continua sem resultados validados. Consulte [VERIFICATION.md](VERIFICATION.md) e [docs/TESTING.md](docs/TESTING.md).
 
 ## Modelagem e arquitetura
 
@@ -133,6 +133,10 @@ Reiniciar os processos da aplicação preserva saldos e outbox no PostgreSQL. Pa
 2. `VERIFICATION.md`: evidência real de verificação.
 3. `CHALLENGE.md`: enunciado original.
 
-Sem frontend, autenticação completa, tracing, dashboard, teste de carga ou partidas dobradas: são opcionais, fora do foco desta entrega.
+Sem frontend, autenticação completa, tracing, dashboard ou partidas dobradas: são opcionais, fora do foco desta entrega.
 
 Para acompanhar uma operação do recebimento à recuperação após falhas, siga o [passo a passo do processamento](docs/FLUXO.md).
+
+## Experimento de carga
+
+`bun run test:load` compara uma wallet disputada com wallets independentes, registra throughput, p50/p95/p99, erros, conflitos de lock e outbox lag, e mede a soma do ledger com históricos diferentes. Metodologia, comandos e limites em [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md). Resultados reais ainda pendentes.

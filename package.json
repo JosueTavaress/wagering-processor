@@ -16,7 +16,8 @@
     "test:all": "bun run typecheck && bun run test && bun run test:integration && bun run test:concurrency",
     "demo": "bun scripts/demo.ts",
     "format": "prettier --write src scripts test *.md *.json compose.yaml .github/workflows/ci.yml",
-    "format:check": "prettier --check src scripts test *.md *.json compose.yaml .github/workflows/ci.yml"
+    "format:check": "prettier --check src scripts test *.md *.json compose.yaml .github/workflows/ci.yml",
+    "test:load": "bun scripts/load.ts"
   },
   "dependencies": {
     "@nestjs/common": "10.4.15",

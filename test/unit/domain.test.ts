@@ -13,6 +13,7 @@ import {
   businessHash,
   hash,
 } from "../../src/application/process-wager-transaction/CanonicalPayload";
+
 const money = (amount: string, currency = "BRL") =>
   Money.from({ amount, currency });
 const wallet = () =>
@@ -82,6 +83,7 @@ describe("Money", () => {
       );
   });
 });
+
 describe("Wallet and ledger", () => {
   test("version and non-negative balance", () => {
     const w = wallet();
@@ -122,6 +124,7 @@ describe("Wallet and ledger", () => {
     ).toThrow();
   });
 });
+
 describe("Wager rules", () => {
   for (const kind of ["BET", "WIN", "LOSS"] as const)
     test(kind, () => {

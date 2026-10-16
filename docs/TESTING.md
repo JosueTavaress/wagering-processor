@@ -1,6 +1,6 @@
 # Estratégia de testes
 
-**Estado atual:** typecheck e 227 testes aprovados na execução com rebuild enviada pelo autor, incluindo a sincronização corrigida do teste de retry; consulte VERIFICATION.md.
+**Estado atual:** typecheck e 229 testes aprovados na execução com rebuild enviada pelo autor: 179 de unidade, 26 de integração e 24 de concorrência, incluindo os dois cenários de rede. Evidência em VERIFICATION.md. O experimento de carga permanece sem resultados validados.
 
 O objetivo é demonstrar que cada operação financeira tem um único efeito, mesmo quando requisições competem entre processos ou transportes. As suítes de integração e concorrência usam PostgreSQL e LocalStack reais; recusam iniciar se esses serviços não estiverem disponíveis.
 
@@ -87,10 +87,10 @@ Workers iniciados pelos novos testes são encerrados em finally. Os testes de cr
 
 ## Limites da evidência
 
-- A suíte completa passou no Ubuntu/WSL em 16/10/2026: typecheck e 227 testes (179 de unidade, 24 de integração e 24 de concorrência), incluindo configuração, classificação de falhas, heartbeat, strings compartilhadas e inicialização HTTP. A evidência está em VERIFICATION.md.
+- A suíte completa passou no Ubuntu/WSL em 16/10/2026: typecheck e 229 testes (179 de unidade, 26 de integração e 24 de concorrência), incluindo configuração, classificação de falhas, heartbeat, strings compartilhadas e inicialização HTTP. A evidência está em VERIFICATION.md.
 - São testes de correção, não um benchmark. Não há alegação de throughput ou percentis de latência.
 - O teste downstream usa uma fila real com três transport ids diferentes para o mesmo eventId e uma inbox SQL persistente. Ele demonstra um consumidor de referência de teste; não acrescenta um serviço downstream de produção.
-- Há teste de SIGTERM com uma transação bloqueada, identificada por pg_blocking_pids. Não há simulação de partição prolongada de rede.
+- Há teste de SIGTERM com uma transação bloqueada, identificada por pg_blocking_pids. Os novos testes mantêm conexões TCP interrompidas durante múltiplas tentativas. Passaram na execução em containers; não cobrem blackholes silenciosos ou todas as falhas de rede.
 - A falha transitória de banco é induzida por um trigger de teste que lança SQLSTATE 08006 no PostgreSQL. Após removê-lo, a mensagem é reentregue e processada pelo caso de uso real. Isso não representa uma interrupção física da conexão.
 - HTTP concorrente demonstra que a correção financeira não depende da ordenação do FIFO. O teste com três consumers na mesma wallet, isoladamente, não elimina a serialização do MessageGroupId.
 
@@ -102,7 +102,7 @@ Esses testes passaram na execução em containers de 16/10/2026, incluindo os 24
 
 ## Regressões da revisão crítica
 
-A integração contém 24 cenários aprovados em containers, incluindo os dois acrescentados no fechamento. Os casos adicionais verificam:
+A integração contém 26 cenários aprovados em containers, incluindo os dois cenários de rede. Os casos adicionais verificam:
 
 - TTL e limite de tentativas vencidos mesmo quando a BET chega antes do retry; rejeição e evento únicos, sem crédito.
 - HTTP 409 para chave reutilizada com outra wallet inexistente.
@@ -123,7 +123,7 @@ As regressões de causas circulares rodam em processos filhos com timeout para q
 
 As regressões de ciclo de vida mantêm uma renovação pendente durante retry, sucesso e DLQ. Conferem que ela termina antes do backoff/ack, que não há renovações simultâneas nem posteriores à conclusão e que falha ou cancelamento por timeout não impedem a finalização. São seis testes locais com transporte controlado em `test/unit/visibility-lifecycle.test.ts`.
 
-O teste `test/unit/http-bootstrap.test.ts` inicializa o módulo Nest com o controller real e uma aplicação de teste injetada, sem PostgreSQL/SQS. Ele cobre a resolução de imports e os metadados de decorators no Bun; não substitui os testes HTTP em containers. Os testes de processo verificam que falhas de inicialização exibem o stderr e que timeouts encerram o processo filho. Os 179 testes de unidade, 24 de integração e 24 de concorrência passaram na execução completa registrada em VERIFICATION.md.
+O teste `test/unit/http-bootstrap.test.ts` inicializa o módulo Nest com o controller real e uma aplicação de teste injetada, sem PostgreSQL/SQS. Ele cobre a resolução de imports e os metadados de decorators no Bun; não substitui os testes HTTP em containers. Os testes de processo verificam que falhas de inicialização exibem o stderr e que timeouts encerram o processo filho. Os 179 testes de unidade, 26 de integração e 24 de concorrência passaram na execução completa registrada em VERIFICATION.md.
 
 ## Fechamento do heartbeat do publisher
 
@@ -131,8 +131,17 @@ Os seis testes de `test/unit/outbox-heartbeat.test.ts` controlam os disparos do 
 
 A integração verifica ambos os caminhos do proprietário antigo: confirmação e reagendamento após outro publisher assumir. Um novo cenário mantém a linha bloqueada, observa a renovação bloqueada em `pg_stat_activity` e exige que o PostgreSQL cancele a instrução antes da liberação do lock. Depois confere o estado intacto e a recuperação por outro publisher. O teste de crash entre envio e confirmação permanece na suíte de concorrência.
 
-Typecheck, 179 testes de unidade, 24 de integração e 24 de concorrência passaram na execução completa com rebuild enviada pelo autor. O cenário de cancelamento SQL foi executado com PostgreSQL real, conforme VERIFICATION.md.
+Typecheck, 179 testes de unidade, 26 de integração e 24 de concorrência passaram na execução completa com rebuild enviada pelo autor. O cenário de cancelamento SQL foi executado com PostgreSQL real, conforme VERIFICATION.md.
 
 ## Sincronização da reentrega após falha transitória
 
 O teste preserva a falha SQL real com código 08006 e verifica o rollback (saldo 100.00, ausência de transação e inbox). Após remover a falha, usa o prazo já existente de `waitFor` para fazer polls até observar saldo 90.00. Não aumenta o timeout nem supõe que o primeiro poll após o backoff necessariamente entregue a mensagem. Confere uma transação processada, um único débito de 10.00, inbox concluída, os dois eventos esperados e reconciliação consistente. O cenário passou na nova execução com PostgreSQL/SQS reais, incluindo as assertions reforçadas.
+
+## Cortes reais de conexão
+
+`test/support/TcpPartition.ts` encaminha tráfego TCP para os serviços reais e permite cortar conexões existentes e recusar novas até a restauração. Não substitui respostas SQL nem respostas SQS.
+
+- PostgreSQL: comprova conexão normal antes do corte, mantém a indisponibilidade por duas entregas SQS, verifica ausência de débito/transação/inbox e depois exige um débito, inbox única, replay e reconciliação consistente.
+- SQS: comprova acesso por uma fila exclusiva, mantém o corte por dois retries da outbox e verifica persistência sem confirmação nem lease retido. Após restaurar, exige publicação e recebimento real do mesmo eventId, além de reconciliação consistente.
+
+A duração é determinada pelas tentativas e pelo backoff, sem um sleep fixo para presumir recuperação. São testes de conexão interrompida, não de rede que aceita pacotes e deixa chamadas pendentes indefinidamente. O experimento de carga separado está em [LOAD_TESTING.md](LOAD_TESTING.md).

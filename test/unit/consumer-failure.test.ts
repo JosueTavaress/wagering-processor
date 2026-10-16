@@ -108,12 +108,14 @@ test("transient and unknown failures retry without acknowledgment", async () => 
   for (const error of [transient, unknown])
     expect((await consumeFailure(error)).actions).toEqual(["retry"]);
 });
+
 test("known permanent error is dead-lettered and audited before acknowledgment", async () => {
   expect(await consumeFailure(denied)).toEqual({
     actions: ["dlq", "audit", "ack"],
     auditReason: "PERMANENT_INFRASTRUCTURE_ERROR",
   });
 });
+
 test("exhausted retries distinguish unknown failures from infrastructure", async () => {
   expect((await consumeFailure(transient, 1000)).auditReason).toBe(
     "INFRASTRUCTURE_RETRIES_EXHAUSTED",
@@ -122,6 +124,7 @@ test("exhausted retries distinguish unknown failures from infrastructure", async
     "UNKNOWN_FAILURE_RETRIES_EXHAUSTED",
   );
 });
+
 test("failed DLQ publication never acknowledges the source", async () => {
   expect((await consumeFailure(denied, 1, true)).actions).toEqual(["dlq"]);
 });
@@ -134,6 +137,7 @@ test("wrapped permanent errors retain the underlying diagnostic name", () => {
     errorCode: "AccessDeniedException",
   });
 });
+
 test("wrapped transient errors retain the underlying database code", () => {
   expect(
     classifyConsumerFailure(

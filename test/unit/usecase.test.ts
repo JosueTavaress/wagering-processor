@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
   UnitOfWork,
@@ -11,6 +11,7 @@ import { Money } from "../../src/domain/entity/Money";
 import { WagerTransaction } from "../../src/domain/entity/WagerTransaction";
 import { WalletLedgerEntry } from "../../src/domain/entity/WalletLedgerEntry";
 import { OutboxMessage } from "../../src/domain/entity/OutboxMessage";
+
 function scenario() {
   const wallet = Wallet.open({
     id: randomUUID(),
@@ -78,200 +79,168 @@ function scenario() {
   };
   return { process, input, wallet, entries, events, transactions };
 }
-test("usecase conflict is not replay and does not apply another debit", async () => {
-  const s = scenario();
-  await s.process.execute(s.input);
-  await expect(
-    s.process.execute({ ...s.input, gameId: "changed" }),
-  ).rejects.toThrow("IDEMPOTENCY_CONFLICT");
-  expect(s.entries).toHaveLength(1);
-  expect(s.wallet.balance.toString()).toBe("90.00");
-});
-test("usecase persists original result and avoids additional events on replay", async () => {
-  const s = scenario();
-  const first = await s.process.execute(s.input);
-  await s.process.execute({
-    ...s.input,
-    externalTransactionId: "second",
-    idempotencyKey: "second",
-  });
-  const replay = await s.process.execute(s.input);
-  expect(replay.balance).toEqual(first.balance);
-  expect(replay.idempotentReplay).toBe(true);
-  expect(s.entries).toHaveLength(2);
-  expect(s.events).toHaveLength(4);
-});
-test("business rejection creates rejection event without ledger", async () => {
-  const s = scenario();
-  const result = await s.process.execute({
-    ...s.input,
-    money: { amount: "101.00", currency: "BRL" },
-  });
-  expect(result.status).toBe("REJECTED");
-  expect(s.entries).toHaveLength(0);
-  expect(s.events[0]?.snapshot().eventType).toBe("WagerTransactionRejected");
-});
-test("reference absence persists pending and emits one pending event", async () => {
-  const s = scenario();
-  const input = {
-    ...s.input,
-    kind: "REFUND" as const,
-    referenceExternalTransactionId: "missing",
-  };
-  expect((await s.process.execute(input)).status).toBe("PENDING_REFERENCE");
-  await s.process.execute(input);
-  expect(s.events).toHaveLength(1);
-  expect(s.events[0]?.snapshot().eventType).toBe(
-    "WagerTransactionPendingReference",
-  );
-  expect(s.entries).toHaveLength(0);
-});
-
-for (const mismatch of ["walletId", "playerId", "roundId"] as const) {
-  test(`pending reference with incompatible ${mismatch} rejects immediately`, async () => {
+describe("Idempotency and business rejection", () => {
+  test("usecase conflict is not replay and does not apply another debit", async () => {
     const s = scenario();
-    const reference = WagerTransaction.create({
+    await s.process.execute(s.input);
+    await expect(
+      s.process.execute({ ...s.input, gameId: "changed" }),
+    ).rejects.toThrow("IDEMPOTENCY_CONFLICT");
+    expect(s.entries).toHaveLength(1);
+    expect(s.wallet.balance.toString()).toBe("90.00");
+  });
+
+  test("usecase persists original result and avoids additional events on replay", async () => {
+    const s = scenario();
+    const first = await s.process.execute(s.input);
+    await s.process.execute({
       ...s.input,
-      id: randomUUID(),
-      [mismatch]: randomUUID(),
-      money: Money.from(s.input.money),
-      payloadHash: "reference",
+      externalTransactionId: "second",
+      idempotencyKey: "second",
     });
-    reference.markPendingReference(s.wallet.balance);
-    s.transactions.push(reference);
+    const replay = await s.process.execute(s.input);
+    expect(replay.balance).toEqual(first.balance);
+    expect(replay.idempotentReplay).toBe(true);
+    expect(s.entries).toHaveLength(2);
+    expect(s.events).toHaveLength(4);
+  });
+
+  test("business rejection creates rejection event without ledger", async () => {
+    const s = scenario();
     const result = await s.process.execute({
       ...s.input,
-      kind: "REFUND",
-      externalTransactionId: "refund",
-      idempotencyKey: "refund",
-      referenceExternalTransactionId: s.input.externalTransactionId,
+      money: { amount: "101.00", currency: "BRL" },
     });
     expect(result.status).toBe("REJECTED");
-    if (result.status === "REJECTED")
-      expect(result.failureCode).toBe("REFERENCE_MISMATCH");
     expect(s.entries).toHaveLength(0);
     expect(s.events[0]?.snapshot().eventType).toBe("WagerTransactionRejected");
   });
-}
+});
 
-for (const kind of ["BET", "LOSS"] as const) {
-  test(`domain rejects reference on ${kind} without transport validation`, () => {
+describe("Missing and incompatible references", () => {
+  test("reference absence persists pending and emits one pending event", async () => {
     const s = scenario();
-    expect(() =>
-      WagerTransaction.create({
+    const input = {
+      ...s.input,
+      kind: "REFUND" as const,
+      referenceExternalTransactionId: "missing",
+    };
+    expect((await s.process.execute(input)).status).toBe("PENDING_REFERENCE");
+    await s.process.execute(input);
+    expect(s.events).toHaveLength(1);
+    expect(s.events[0]?.snapshot().eventType).toBe(
+      "WagerTransactionPendingReference",
+    );
+    expect(s.entries).toHaveLength(0);
+  });
+
+  for (const mismatch of ["walletId", "playerId", "roundId"] as const) {
+    test(`pending reference with incompatible ${mismatch} rejects immediately`, async () => {
+      const s = scenario();
+      const reference = WagerTransaction.create({
         ...s.input,
         id: randomUUID(),
-        kind,
-        money: Money.from({
-          amount: kind === "LOSS" ? "0.00" : "10.00",
-          currency: "BRL",
+        [mismatch]: randomUUID(),
+        money: Money.from(s.input.money),
+        payloadHash: "reference",
+      });
+      reference.markPendingReference(s.wallet.balance);
+      s.transactions.push(reference);
+      const result = await s.process.execute({
+        ...s.input,
+        kind: "REFUND",
+        externalTransactionId: "refund",
+        idempotencyKey: "refund",
+        referenceExternalTransactionId: s.input.externalTransactionId,
+      });
+      expect(result.status).toBe("REJECTED");
+      if (result.status === "REJECTED")
+        expect(result.failureCode).toBe("REFERENCE_MISMATCH");
+      expect(s.entries).toHaveLength(0);
+      expect(s.events[0]?.snapshot().eventType).toBe(
+        "WagerTransactionRejected",
+      );
+    });
+  }
+
+  for (const kind of ["BET", "LOSS"] as const) {
+    test(`domain rejects reference on ${kind} without transport validation`, () => {
+      const s = scenario();
+      expect(() =>
+        WagerTransaction.create({
+          ...s.input,
+          id: randomUUID(),
+          kind,
+          money: Money.from({
+            amount: kind === "LOSS" ? "0.00" : "10.00",
+            currency: "BRL",
+          }),
+          payloadHash: "hash",
+          referenceExternalTransactionId: "another-operation",
         }),
-        payloadHash: "hash",
-        referenceExternalTransactionId: "another-operation",
-      }),
-    ).toThrow("UNEXPECTED_REFERENCE");
-  });
-}
+      ).toThrow("UNEXPECTED_REFERENCE");
+    });
+  }
+});
 
-for (const code of [
-  "INVALID_TRANSACTION_STATE",
-  "UNBALANCED_LEDGER",
-  "NO_LEDGER_DIRECTION",
-]) {
-  test(`programming error ${code} escapes processing without a business rejection`, async () => {
-    const s = scenario();
-    s.wallet.debit = () => {
-      throw new DomainError(code);
+describe("Programming errors", () => {
+  for (const code of [
+    "INVALID_TRANSACTION_STATE",
+    "UNBALANCED_LEDGER",
+    "NO_LEDGER_DIRECTION",
+  ]) {
+    test(`programming error ${code} escapes processing without a business rejection`, async () => {
+      const s = scenario();
+      s.wallet.debit = () => {
+        throw new DomainError(code);
+      };
+      await expect(s.process.execute(s.input)).rejects.toThrow(code);
+      expect(s.transactions).toHaveLength(0);
+      expect(s.entries).toHaveLength(0);
+      expect(s.events).toHaveLength(0);
+      expect(s.wallet.balance.toString()).toBe("100.00");
+    });
+  }
+});
+
+describe("Reference retry and expiration", () => {
+  test("an exhausted pending reference is rejected without another pending notification", async () => {
+    const {
+      process: processor,
+      input,
+      transactions,
+      entries,
+      events,
+      wallet,
+    } = scenario();
+    const refund = {
+      ...input,
+      kind: "REFUND" as const,
+      referenceExternalTransactionId: "missing",
     };
-    await expect(s.process.execute(s.input)).rejects.toThrow(code);
-    expect(s.transactions).toHaveLength(0);
-    expect(s.entries).toHaveLength(0);
-    expect(s.events).toHaveLength(0);
-    expect(s.wallet.balance.toString()).toBe("100.00");
+    const pending = await processor.execute(refund);
+    expect(pending.status).toBe("PENDING_REFERENCE");
+    transactions[0] = WagerTransaction.rehydrate({
+      ...transactions[0]!.snapshot(),
+      attempts: 10,
+      nextAttemptAt: new Date(0),
+    });
+    const rejected = await processor.execute(refund, {
+      correlationId: "retry",
+      retryReference: true,
+    });
+    expect(rejected.status).toBe("REJECTED");
+    if (rejected.status === "REJECTED")
+      expect(rejected.failureCode).toBe("REFERENCE_EXPIRED");
+    expect(entries).toHaveLength(0);
+    expect(wallet.balance.toString()).toBe("100.00");
+    expect(events.map((event) => event.snapshot().eventType)).toEqual([
+      "WagerTransactionPendingReference",
+      "WagerTransactionRejected",
+    ]);
   });
-}
 
-test("an exhausted pending reference is rejected without another pending notification", async () => {
-  const {
-    process: processor,
-    input,
-    transactions,
-    entries,
-    events,
-    wallet,
-  } = scenario();
-  const refund = {
-    ...input,
-    kind: "REFUND" as const,
-    referenceExternalTransactionId: "missing",
-  };
-  const pending = await processor.execute(refund);
-  expect(pending.status).toBe("PENDING_REFERENCE");
-  transactions[0] = WagerTransaction.rehydrate({
-    ...transactions[0]!.snapshot(),
-    attempts: 10,
-    nextAttemptAt: new Date(0),
-  });
-  const rejected = await processor.execute(refund, {
-    correlationId: "retry",
-    retryReference: true,
-  });
-  expect(rejected.status).toBe("REJECTED");
-  if (rejected.status === "REJECTED")
-    expect(rejected.failureCode).toBe("REFERENCE_EXPIRED");
-  expect(entries).toHaveLength(0);
-  expect(wallet.balance.toString()).toBe("100.00");
-  expect(events.map((event) => event.snapshot().eventType)).toEqual([
-    "WagerTransactionPendingReference",
-    "WagerTransactionRejected",
-  ]);
-});
-
-test("a due reference retry resolves without duplicate pending or financial events", async () => {
-  const {
-    process: processor,
-    input,
-    transactions,
-    entries,
-    events,
-    wallet,
-  } = scenario();
-  const refund = {
-    ...input,
-    kind: "REFUND" as const,
-    externalTransactionId: "refund",
-    idempotencyKey: "refund",
-    referenceExternalTransactionId: input.externalTransactionId,
-  };
-  expect((await processor.execute(refund)).status).toBe("PENDING_REFERENCE");
-  await processor.execute(input);
-  transactions[0] = WagerTransaction.rehydrate({
-    ...transactions[0]!.snapshot(),
-    nextAttemptAt: new Date(0),
-  });
-  expect(
-    (
-      await processor.execute(refund, {
-        correlationId: "retry",
-        retryReference: true,
-      })
-    ).status,
-  ).toBe("PROCESSED");
-  const replay = await processor.execute(refund);
-  expect(replay.idempotentReplay).toBe(true);
-  expect(wallet.balance.toString()).toBe("100.00");
-  expect(entries).toHaveLength(2);
-  expect(events.map((event) => event.snapshot().eventType)).toEqual([
-    "WagerTransactionPendingReference",
-    "WagerTransactionProcessed",
-    "WalletBalanceChanged",
-    "WagerTransactionProcessed",
-    "WalletBalanceChanged",
-  ]);
-});
-
-for (const expiredBy of ["ttl", "attempts"] as const) {
-  test(`a late reference cannot revive a pending reversal expired by ${expiredBy}`, async () => {
+  test("a due reference retry resolves without duplicate pending or financial events", async () => {
     const {
       process: processor,
       input,
@@ -287,37 +256,86 @@ for (const expiredBy of ["ttl", "attempts"] as const) {
       idempotencyKey: "refund",
       referenceExternalTransactionId: input.externalTransactionId,
     };
-    await processor.execute(refund);
+    expect((await processor.execute(refund)).status).toBe("PENDING_REFERENCE");
+    await processor.execute(input);
     transactions[0] = WagerTransaction.rehydrate({
       ...transactions[0]!.snapshot(),
       nextAttemptAt: new Date(0),
-      ...(expiredBy === "ttl" ? { createdAt: new Date(0) } : { attempts: 10 }),
     });
+    expect(
+      (
+        await processor.execute(refund, {
+          correlationId: "retry",
+          retryReference: true,
+        })
+      ).status,
+    ).toBe("PROCESSED");
+    const replay = await processor.execute(refund);
+    expect(replay.idempotentReplay).toBe(true);
+    expect(wallet.balance.toString()).toBe("100.00");
+    expect(entries).toHaveLength(2);
+    expect(events.map((event) => event.snapshot().eventType)).toEqual([
+      "WagerTransactionPendingReference",
+      "WagerTransactionProcessed",
+      "WalletBalanceChanged",
+      "WagerTransactionProcessed",
+      "WalletBalanceChanged",
+    ]);
+  });
+
+  for (const expiredBy of ["ttl", "attempts"] as const) {
+    test(`a late reference cannot revive a pending reversal expired by ${expiredBy}`, async () => {
+      const {
+        process: processor,
+        input,
+        transactions,
+        entries,
+        events,
+        wallet,
+      } = scenario();
+      const refund = {
+        ...input,
+        kind: "REFUND" as const,
+        externalTransactionId: "refund",
+        idempotencyKey: "refund",
+        referenceExternalTransactionId: input.externalTransactionId,
+      };
+      await processor.execute(refund);
+      transactions[0] = WagerTransaction.rehydrate({
+        ...transactions[0]!.snapshot(),
+        nextAttemptAt: new Date(0),
+        ...(expiredBy === "ttl"
+          ? { createdAt: new Date(0) }
+          : { attempts: 10 }),
+      });
+      await processor.execute(input);
+      const result = await processor.execute(refund, {
+        correlationId: "retry",
+        retryReference: true,
+      });
+      expect(result.status).toBe("REJECTED");
+      if (result.status === "REJECTED")
+        expect(result.failureCode).toBe("REFERENCE_EXPIRED");
+      expect(entries).toHaveLength(1);
+      expect(wallet.balance.toString()).toBe("90.00");
+      expect(
+        events.filter(
+          (event) => event.snapshot().eventType === "WagerTransactionRejected",
+        ),
+      ).toHaveLength(1);
+      expect((await processor.execute(refund)).idempotentReplay).toBe(true);
+    });
+  }
+});
+
+describe("Identity conflict before wallet lookup", () => {
+  test("a reused key with another missing wallet is an idempotency conflict", async () => {
+    const { process: processor, input, entries, wallet } = scenario();
     await processor.execute(input);
-    const result = await processor.execute(refund, {
-      correlationId: "retry",
-      retryReference: true,
-    });
-    expect(result.status).toBe("REJECTED");
-    if (result.status === "REJECTED")
-      expect(result.failureCode).toBe("REFERENCE_EXPIRED");
+    await expect(
+      processor.execute({ ...input, walletId: randomUUID() }),
+    ).rejects.toThrow("IDEMPOTENCY_CONFLICT");
     expect(entries).toHaveLength(1);
     expect(wallet.balance.toString()).toBe("90.00");
-    expect(
-      events.filter(
-        (event) => event.snapshot().eventType === "WagerTransactionRejected",
-      ),
-    ).toHaveLength(1);
-    expect((await processor.execute(refund)).idempotentReplay).toBe(true);
   });
-}
-
-test("a reused key with another missing wallet is an idempotency conflict", async () => {
-  const { process: processor, input, entries, wallet } = scenario();
-  await processor.execute(input);
-  await expect(
-    processor.execute({ ...input, walletId: randomUUID() }),
-  ).rejects.toThrow("IDEMPOTENCY_CONFLICT");
-  expect(entries).toHaveLength(1);
-  expect(wallet.balance.toString()).toBe("90.00");
 });

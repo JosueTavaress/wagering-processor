@@ -51,6 +51,7 @@ test("recovery defaults and explicit positive integers", () => {
     maxReceiveCount: 5,
   });
 });
+
 test("service limits reject oversized visibility, lease and redrive count", () => {
   for (const [name, value] of [
     ["QUEUE_VISIBILITY_SECONDS", "43201"],
@@ -60,6 +61,7 @@ test("service limits reject oversized visibility, lease and redrive count", () =
     expect(() => readRecoveryConfig({ [name]: value })).toThrow(name);
   }
 });
+
 test("composition rejects bad configuration before connecting to infrastructure", async () => {
   const previous = process.env.REFERENCE_TTL_MS;
   process.env.REFERENCE_TTL_MS = "abc";
