@@ -4,6 +4,12 @@ Processador financeiro de apostas com Bun, NestJS, PostgreSQL, MikroORM e SQS/Lo
 
 **Verificação:** typecheck e 213 testes aprovados em containers no Ubuntu/WSL em 16/10/2026: 167 de unidade, 22 de integração e 24 de concorrência, sem falhas. A formatação foi aprovada separadamente. Consulte [VERIFICATION.md](VERIFICATION.md) para a evidência e [docs/TESTING.md](docs/TESTING.md) para a cobertura.
 
+## Modelagem e arquitetura
+
+Usei padrões táticos de DDD para modelar as regras financeiras: `Money` como objeto de valor imutável, `Wallet` como raiz de agregado, `WagerTransaction` com transições explícitas e `WagerPolicy` para regras que envolvem essas entidades. Repositories abstraem a persistência, e eventos de integração registram os resultados para publicação pela outbox.
+
+A organização segue princípios de Clean Architecture: `domain` concentra as regras sem depender de frameworks; `application` coordena os casos de uso e define portas; `infra` implementa HTTP, banco e mensageria. Mantive um único serviço, com API e workers em processos separados. As decisões e os limites estão em [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Iniciar usando apenas Docker
 
 Pré-requisitos: Docker Engine/Desktop com Compose v2; portas 3000–3002, 5432 e 4566 livres; imagens/dependências. No Windows, use Docker Desktop com containers Linux/WSL2.
