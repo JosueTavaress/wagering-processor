@@ -4,7 +4,7 @@ O objetivo é demonstrar que cada operação financeira tem um único efeito, me
 
 ## Executar
 
-Todos os checks, com Bun incluído na imagem:
+Typecheck e suítes de testes, com Bun incluído na imagem (formatação é um check separado):
 
 ```bash
 docker compose --profile test run --build --rm tests
@@ -85,7 +85,7 @@ Workers iniciados pelos novos testes são encerrados em finally. Os testes de cr
 
 ## Limites da evidência
 
-- A suíte completa passou no Ubuntu/WSL em 16/10/2026: typecheck e 216 testes (170 de unidade, 22 de integração e 24 de concorrência), incluindo configuração, classificação de falhas, heartbeat, strings compartilhadas e inicialização HTTP. A evidência está em VERIFICATION.md.
+- A suíte completa passou no Ubuntu/WSL em 16/10/2026: typecheck e 227 testes (179 de unidade, 24 de integração e 24 de concorrência), incluindo configuração, classificação de falhas, heartbeat, strings compartilhadas e inicialização HTTP. A evidência está em VERIFICATION.md.
 - São testes de correção, não um benchmark. Não há alegação de throughput ou percentis de latência.
 - O teste downstream usa uma fila real com três transport ids diferentes para o mesmo eventId e uma inbox SQL persistente. Ele demonstra um consumidor de referência de teste; não acrescenta um serviço downstream de produção.
 - Há teste de SIGTERM com uma transação bloqueada, identificada por pg_blocking_pids. Não há simulação de partição prolongada de rede.
@@ -100,7 +100,7 @@ Esses testes passaram na execução em containers de 16/10/2026, incluindo os 24
 
 ## Regressões da revisão crítica
 
-A integração agora contém 22 cenários. Os casos adicionais verificam:
+A integração contém 24 cenários aprovados em containers, incluindo os dois acrescentados no fechamento. Os casos adicionais verificam:
 
 - TTL e limite de tentativas vencidos mesmo quando a BET chega antes do retry; rejeição e evento únicos, sem crédito.
 - HTTP 409 para chave reutilizada com outra wallet inexistente.
@@ -111,7 +111,7 @@ A integração agora contém 22 cenários. Os casos adicionais verificam:
 
 O teste de shutdown está na suíte de concorrência: uma conexão mantém o lock da wallet; após observar o consumer bloqueado no PostgreSQL, o teste envia SIGTERM, verifica readiness 503, libera o lock e confere saída normal, ack, inbox, saldo, versão e ledger.
 
-As falhas de transporte e de posse são injetadas explicitamente, sem substituir PostgreSQL nem SQS por mocks. Esses cenários e as alterações de recuperação passaram na execução completa registrada em VERIFICATION.md.
+As falhas de transporte e de posse são injetadas explicitamente, sem substituir PostgreSQL nem SQS por mocks. Os resultados da execução completa atual estão em VERIFICATION.md.
 
 ## Configuração e classificação de falhas
 
@@ -121,4 +121,12 @@ As regressões de causas circulares rodam em processos filhos com timeout para q
 
 As regressões de ciclo de vida mantêm uma renovação pendente durante retry, sucesso e DLQ. Conferem que ela termina antes do backoff/ack, que não há renovações simultâneas nem posteriores à conclusão e que falha ou cancelamento por timeout não impedem a finalização. São seis testes locais com transporte controlado em `test/unit/visibility-lifecycle.test.ts`.
 
-O teste `test/unit/http-bootstrap.test.ts` inicializa o módulo Nest com o controller real e uma aplicação de teste injetada, sem PostgreSQL/SQS. Ele cobre a resolução de imports e os metadados de decorators no Bun; não substitui os testes HTTP em containers. Os testes de processo verificam que falhas de inicialização exibem o stderr e que timeouts encerram o processo filho. Os 170 testes de unidade, 22 de integração e 24 de concorrência passaram na execução completa registrada em VERIFICATION.md.
+O teste `test/unit/http-bootstrap.test.ts` inicializa o módulo Nest com o controller real e uma aplicação de teste injetada, sem PostgreSQL/SQS. Ele cobre a resolução de imports e os metadados de decorators no Bun; não substitui os testes HTTP em containers. Os testes de processo verificam que falhas de inicialização exibem o stderr e que timeouts encerram o processo filho. Os 179 testes de unidade, 24 de integração e 24 de concorrência passaram na execução completa registrada em VERIFICATION.md.
+
+## Fechamento do heartbeat do publisher
+
+Os seis testes de `test/unit/outbox-heartbeat.test.ts` controlam os disparos do timer e a resolução das Promises, sem sleeps. Cobrem uma única renovação pendente, descarte de disparos extras, finalização antes de confirmação/retry, falha e perda de lease, preservação do token e ausência de renovações posteriores ao encerramento. Os três testes da métrica da DLQ verificam falha, periodicidade e consulta pendente sem bloquear o consumo.
+
+A integração verifica ambos os caminhos do proprietário antigo: confirmação e reagendamento após outro publisher assumir. Um novo cenário mantém a linha bloqueada, observa a renovação bloqueada em `pg_stat_activity` e exige que o PostgreSQL cancele a instrução antes da liberação do lock. Depois confere o estado intacto e a recuperação por outro publisher. O teste de crash entre envio e confirmação permanece na suíte de concorrência.
+
+Typecheck, 179 testes de unidade, 24 de integração e 24 de concorrência passaram na execução completa com rebuild enviada pelo autor. O cenário de cancelamento SQL foi executado com PostgreSQL real, conforme VERIFICATION.md.

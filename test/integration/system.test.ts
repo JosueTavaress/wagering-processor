@@ -778,74 +778,76 @@ test("a slow publisher retains its lease while another publisher polls", async (
   }
 });
 
-test("a publisher that loses its token cannot overwrite the new owner's confirmation", async () => {
-  const { app } = env;
-  const { wallet } = await fixture(app);
-  const rows = await app.db.em
-    .fork()
-    .execute<
-      { id: string }[]
-    >("select id from outbox where aggregate_id=? order by occurred_at,id limit 1", [wallet.id]);
-  const id = rows[0]!.id;
-  const restoreOutbox = await isolateOutboxMessage(app, id);
-  const previousLease = process.env.OUTBOX_LEASE_SECONDS;
-  process.env.OUTBOX_LEASE_SECONDS = "1";
-  const slowBroker = new SqsBroker();
-  const publish = slowBroker.publish.bind(slowBroker);
-  let release!: () => void;
-  let started!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const publishing = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  slowBroker.publish = async (...args: Parameters<SqsBroker["publish"]>) => {
-    started();
-    await gate;
-    await publish(...args);
-  };
-  const pending = new OutboxPublisher(app.db, slowBroker).tick();
-  try {
-    await Promise.race([
-      publishing,
-      pending.then(() => {
-        throw new Error("NO_MESSAGE_CLAIMED");
-      }),
-    ]);
-    // Fault injection models lost ownership without waiting for an actual database outage.
-    await app.db.em
-      .fork()
-      .execute(
-        "update outbox set lease_token=?,lease_until=now()-interval '1 second' where id=?",
-        [randomUUID(), id],
-      );
-    expect(await new OutboxPublisher(app.db, app.broker).tick()).toBe(1);
-    const confirmed = await app.db.em
+for (const outcome of ["confirm", "retry"] as const) {
+  test(`a publisher that loses its token cannot ${outcome} over the new owner's confirmation`, async () => {
+    const { app } = env;
+    const { wallet } = await fixture(app);
+    const rows = await app.db.em
       .fork()
       .execute<
-        { published_at: Date; attempts: number }[]
-      >("select published_at,attempts from outbox where id=?", [id]);
-    await Bun.sleep(500);
-    release();
-    await pending;
-    const after = await app.db.em
-      .fork()
-      .execute<
-        { published_at: Date; attempts: number }[]
-      >("select published_at,attempts from outbox where id=?", [id]);
-    expect(after[0]!.published_at).toEqual(confirmed[0]!.published_at);
-    expect(after[0]!.attempts).toBe(0);
-    await consistent(app, wallet.id);
-  } finally {
-    release();
-    await pending.catch(() => {});
-    slowBroker.close();
-    if (previousLease === undefined) delete process.env.OUTBOX_LEASE_SECONDS;
-    else process.env.OUTBOX_LEASE_SECONDS = previousLease;
-    await restoreOutbox();
-  }
-});
+        { id: string }[]
+      >("select id from outbox where aggregate_id=? order by occurred_at,id limit 1", [wallet.id]);
+    const id = rows[0]!.id;
+    const restoreOutbox = await isolateOutboxMessage(app, id);
+    const previousLease = process.env.OUTBOX_LEASE_SECONDS;
+    process.env.OUTBOX_LEASE_SECONDS = "1";
+    const slowBroker = new SqsBroker();
+    const publish = slowBroker.publish.bind(slowBroker);
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const publishing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    slowBroker.publish = async (...args: Parameters<SqsBroker["publish"]>) => {
+      started();
+      await gate;
+      if (outcome === "retry") throw new Error("SEND_FAILED_AFTER_LEASE_LOSS");
+      await publish(...args);
+    };
+    const pending = new OutboxPublisher(app.db, slowBroker).tick();
+    try {
+      await Promise.race([
+        publishing,
+        pending.then(() => {
+          throw new Error("NO_MESSAGE_CLAIMED");
+        }),
+      ]);
+      // Fault injection models lost ownership without waiting for an actual database outage.
+      await app.db.em
+        .fork()
+        .execute(
+          "update outbox set lease_token=?,lease_until=now()-interval '1 second' where id=?",
+          [randomUUID(), id],
+        );
+      expect(await new OutboxPublisher(app.db, app.broker).tick()).toBe(1);
+      const confirmed = await app.db.em
+        .fork()
+        .execute<
+          { published_at: Date; attempts: number }[]
+        >("select published_at,attempts from outbox where id=?", [id]);
+      release();
+      await pending;
+      const after = await app.db.em
+        .fork()
+        .execute<
+          { published_at: Date; attempts: number }[]
+        >("select published_at,attempts from outbox where id=?", [id]);
+      expect(after[0]!.published_at).toEqual(confirmed[0]!.published_at);
+      expect(after[0]!.attempts).toBe(0);
+      await consistent(app, wallet.id);
+    } finally {
+      release();
+      await pending.catch(() => {});
+      slowBroker.close();
+      if (previousLease === undefined) delete process.env.OUTBOX_LEASE_SECONDS;
+      else process.env.OUTBOX_LEASE_SECONDS = previousLease;
+      await restoreOutbox();
+    }
+  });
+}
 
 test("a downstream consumer deduplicates real SQS deliveries atomically by eventId", async () => {
   const { app } = env;
@@ -948,5 +950,107 @@ test("a downstream consumer deduplicates real SQS deliveries atomically by event
     await app.db.em
       .fork()
       .execute("drop table test_event_inbox,test_event_projection");
+  }
+});
+
+test("a blocked outbox renewal is cancelled by PostgreSQL and another publisher recovers", async () => {
+  const { app } = env;
+  const { wallet } = await fixture(app);
+  const [message] = await app.db.em
+    .fork()
+    .execute<
+      { id: string }[]
+    >("select id from outbox where aggregate_id=? order by occurred_at,id limit 1", [wallet.id]);
+  const id = message!.id;
+  const restoreOutbox = await isolateOutboxMessage(app, id);
+  const previousLease = process.env.OUTBOX_LEASE_SECONDS;
+  process.env.OUTBOX_LEASE_SECONDS = "3";
+  let publicationStarted!: () => void, finishPublication!: () => void;
+  let lockAcquired!: () => void, releaseLock!: () => void;
+  const publishing = new Promise<void>((resolve) => {
+    publicationStarted = resolve;
+  });
+  const publicationGate = new Promise<void>((resolve) => {
+    finishPublication = resolve;
+  });
+  const locked = new Promise<void>((resolve) => {
+    lockAcquired = resolve;
+  });
+  const lockGate = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const broker = new SqsBroker();
+  const publish = broker.publish.bind(broker);
+  broker.publish = async (...args: Parameters<SqsBroker["publish"]>) => {
+    publicationStarted();
+    await publicationGate;
+    await publish(...args);
+  };
+  const pending = new OutboxPublisher(app.db, broker).tick();
+  let blocker: Promise<unknown> | undefined;
+  try {
+    await Promise.race([
+      publishing,
+      pending.then(() => {
+        throw new Error("NO_MESSAGE_CLAIMED");
+      }),
+    ]);
+    const [claimed] = await app.db.em
+      .fork()
+      .execute<
+        { lease_until: Date }[]
+      >("select lease_until from outbox where id=?", [id]);
+    blocker = app.db.em.fork().transactional(async (em) => {
+      await em.execute("select id from outbox where id=? for update", [id]);
+      lockAcquired();
+      await lockGate;
+    });
+    await locked;
+    await waitFor(async () => {
+      const rows = await app.db.em
+        .fork()
+        .execute<
+          { pid: number }[]
+        >("select pid from pg_stat_activity where datname=current_database() and pid<>pg_backend_pid() and cardinality(pg_blocking_pids(pid))>0 and query like ?", ["%lease_until=clock_timestamp()%"]);
+      return rows.length > 0;
+    });
+    finishPublication();
+    // The row remains locked: completion requires a real SQL timeout, not lock release.
+    expect(await pending).toBe(1);
+    const [afterTimeout] = await app.db.em.fork().execute<
+      {
+        lease_until: Date;
+        published_at: Date | null;
+        attempts: number;
+      }[]
+    >("select lease_until,published_at,attempts from outbox where id=?", [id]);
+    expect(afterTimeout!.lease_until).toEqual(claimed!.lease_until);
+    expect(afterTimeout!.published_at).toBeNull();
+    expect(afterTimeout!.attempts).toBe(0);
+    releaseLock();
+    await blocker;
+    await app.db.em
+      .fork()
+      .execute(
+        "update outbox set lease_until=now()-interval '1 second' where id=?",
+        [id],
+      );
+    expect(await new OutboxPublisher(app.db, app.broker).tick()).toBe(1);
+    const [recovered] = await app.db.em
+      .fork()
+      .execute<
+        { published_at: Date | null }[]
+      >("select published_at from outbox where id=?", [id]);
+    expect(recovered!.published_at).not.toBeNull();
+    await consistent(app, wallet.id);
+  } finally {
+    finishPublication();
+    releaseLock();
+    await blocker?.catch(() => {});
+    await pending.catch(() => {});
+    broker.close();
+    if (previousLease === undefined) delete process.env.OUTBOX_LEASE_SECONDS;
+    else process.env.OUTBOX_LEASE_SECONDS = previousLease;
+    await restoreOutbox();
   }
 });

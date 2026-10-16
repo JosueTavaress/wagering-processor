@@ -85,6 +85,7 @@ export class OutboxPublisher {
         process.env.CRASH_AFTER_PUBLISH === "1"
       )
         process.kill(process.pid, ProcessSignal.Kill);
+      await lease.stop();
       if (lease.isLost()) {
         this.logLostLease(row);
         return;
@@ -97,6 +98,7 @@ export class OutboxPublisher {
           [message.snapshot().publishedAt, row.id, leaseToken],
         );
     } catch (error) {
+      await lease.stop();
       if (lease.isLost()) {
         this.logLostLease(row);
         return;
@@ -115,39 +117,64 @@ export class OutboxPublisher {
     leaseToken: string;
   }) {
     const leaseSeconds = this.config.outboxLeaseSeconds;
-    let lost = false;
-    let renewal = Promise.resolve();
-    const timer = setInterval(
-      () => {
-        // Serialize renewals and drain them before finishing this publication.
-        renewal = renewal
-          .then(async () => {
-            if (lost) return;
-            const rows = await this.db.em.fork().execute<{ id: string }[]>(
-              `update outbox set lease_until=now()+make_interval(secs=>?)
-           where id=? and lease_token=? and published_at is null and lease_until>now()
-           returning id`,
-              [leaseSeconds, messageId, leaseToken],
-            );
-            lost = rows.length === 0;
-          })
-          .catch(() => {
-            lost = true;
-          });
-      },
-      Math.max(
-        HeartbeatPolicy.minIntervalMs,
-        (leaseSeconds * HeartbeatPolicy.millisecondsPerSecond) /
-          HeartbeatPolicy.renewalsPerLease,
-      ),
+    const intervalMs = Math.max(
+      HeartbeatPolicy.minIntervalMs,
+      (leaseSeconds * HeartbeatPolicy.millisecondsPerSecond) /
+        HeartbeatPolicy.renewalsPerLease,
     );
+    const timeoutMs = Math.floor(
+      Math.min(HeartbeatPolicy.maxRequestTimeoutMs, intervalMs),
+    );
+    let lost = false;
+    let stopped = false;
+    let inFlight: Promise<void> | undefined;
+    const timer = setInterval(() => {
+      if (stopped || lost || inFlight) return;
+      inFlight = this.renewLease({ messageId, leaseToken, timeoutMs })
+        .then((renewed) => {
+          lost = !renewed;
+        })
+        .catch(() => {
+          lost = true;
+        })
+        .finally(() => {
+          inFlight = undefined;
+        });
+    }, intervalMs);
     return {
       isLost: () => lost,
       stop: async () => {
+        stopped = true;
         clearInterval(timer);
-        await renewal;
+        await inFlight;
       },
     };
+  }
+
+  private async renewLease({
+    messageId,
+    leaseToken,
+    timeoutMs,
+  }: {
+    messageId: string;
+    leaseToken: string;
+    timeoutMs: number;
+  }): Promise<boolean> {
+    return this.db.em.fork().transactional(async (entityManager) => {
+      // SET LOCAL is scoped to this transaction; PostgreSQL cancels blocked work.
+      await entityManager.execute(
+        "select set_config('statement_timeout', ?, true), set_config('lock_timeout', ?, true)",
+        [`${timeoutMs}ms`, `${timeoutMs}ms`],
+      );
+      const rows = await entityManager.execute<{ id: string }[]>(
+        `update outbox set lease_until=clock_timestamp()+make_interval(secs=>?)
+         where id=? and lease_token=? and published_at is null
+           and lease_until>clock_timestamp()
+         returning id`,
+        [this.config.outboxLeaseSeconds, messageId, leaseToken],
+      );
+      return rows.length > 0;
+    });
   }
 
   private logLostLease(row: ClaimedMessage): void {

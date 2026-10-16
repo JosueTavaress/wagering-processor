@@ -26,7 +26,7 @@ O fluxo é: pré-checar identidade → bloquear wallet → reler identidade → 
 
 O schema reforça as garantias com unicidade de wallet por jogador/moeda, chave idempotente, identidade externa, lançamento por transação/wallet e reversão por referência/tipo. Checks e triggers protegem saldo não negativo, aritmética, direção e continuidade do ledger, estados terminais e imutabilidade dos lançamentos, inclusive contra UPDATE, DELETE e TRUNCATE.
 
-No commit, constraints diferidas conferem o saldo contra a soma do ledger. Escolhi essa proteção para tornar a consistência verificável no banco. O custo cresce com o histórico da wallet; em produção, mediria esse custo antes de avaliar uma validação incremental. A reconciliação também bloqueia a wallet e sinaliza divergências por resposta, log e métrica, sem corrigi-las silenciosamente.
+No commit, constraints diferidas conferem o saldo contra a soma do ledger. Escolhi essa proteção para tornar a consistência verificável no banco. O custo cresce com o histórico da wallet e prolonga a transação e a retenção do lock. Uma movimentação normalmente dispara a conferência tanto pela wallet quanto pelo ledger; em produção, mediria esse custo antes de avaliar uma validação incremental. A reconciliação também bloqueia a wallet e sinaliza divergências por resposta, log e métrica, sem corrigi-las silenciosamente.
 
 ## Idempotência e referências
 
@@ -55,6 +55,8 @@ Falhas transitórias reconhecidas recebem retry com backoff e limite de tentativ
 O consumidor mantém no máximo uma renovação de visibilidade em andamento. Antes do retry ou ack, interrompe novos disparos e aguarda a chamada pendente, evitando que um heartbeat antigo sobrescreva o backoff. Cada renovação usa cancelamento por timeout (um terço da visibilidade, limitado a 10 segundos); se falhar, a reentrega continua protegida pela idempotência.
 
 A outbox guarda eventos na mesma transação do saldo. Publishers selecionam trabalho com `FOR UPDATE SKIP LOCKED`, usam lease de 30 segundos renovável e só confirmam/reagendam com o próprio token. Se o processo morrer após o commit, outro publica; se morrer após enviar e antes de confirmar, pode haver publicação duplicada. **O consumidor deve deduplicar persistentemente por eventId.** O teste downstream demonstra isso com SQS e inbox SQL reais.
+
+O heartbeat do publisher mantém uma única renovação em andamento e descarta disparos enquanto ela está pendente. Antes de confirmar ou reagendar, interrompe o timer e aguarda essa renovação. Cada renovação usa uma transação curta com `statement_timeout` e `lock_timeout` locais, limitados a um terço do lease e no máximo 10 segundos. O PostgreSQL cancela a instrução ao atingir o limite; não há apenas abandono da Promise. A validade do lease é conferida pelo relógio atual do banco. Esses limites cobrem a execução SQL, não garantem um prazo total sob partição de rede; a aquisição de conexão possui timeout próprio de 5 segundos.
 
 Eventos têm subclasses concretas, versão e envelope estável, com valores monetários em strings. Não há garantia de ordem absoluta entre publishers; `walletVersion` permite identificar desordem. A outbox tenta novamente com backoff até 60 segundos, sem descartar eventos por limite de tentativas.
 

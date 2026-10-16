@@ -1,23 +1,21 @@
 # Verificação
 
-**Suíte completa aprovada em 16/10/2026: typecheck e 216 testes, sem falhas.**
+**Typecheck e 227 testes aprovados em containers em 16/10/2026, sem falhas.**
 
-A execução em containers, com rebuild, inclui a refatoração dos números mágicos em constantes e políticas nomeadas. O resultado foi confirmado pelo log enviado pelo autor: 170 testes de unidade, 22 de integração e 24 de concorrência, sem falhas.
+Resultado da execução com rebuild realizada pelo autor no Ubuntu/WSL e enviada nesta revisão:
 
-| Verificação                     | Resultado                              |
-| ------------------------------- | -------------------------------------- |
-| Typecheck                       | Aprovado                               |
-| Unidade                         | 170 passaram · 0 falhas                |
-| Integração com PostgreSQL e SQS | 22 passaram · 0 falhas                 |
-| Concorrência entre processos    | 24 passaram · 0 falhas                 |
-| **Total**                       | **216 passaram · 0 falhas**            |
-| Formatação com Prettier         | Aprovada em verificação local separada |
+| Verificação                   | Resultado                                |
+| ----------------------------- | ---------------------------------------- |
+| Typecheck                     | Aprovado                                 |
+| Unidade                       | 179 passaram · 0 falhas                  |
+| Integração com PostgreSQL/SQS | 24 passaram · 0 falhas                   |
+| Concorrência entre processos  | 24 passaram · 0 falhas                   |
+| **Total**                     | **227 passaram · 0 falhas**              |
+| Formatação                    | Aprovada separadamente em execução local |
 
-**Cenários críticos:** idempotência, disputa de saldo, múltiplos processos, atomicidade, referências fora de ordem, retry/DLQ, recuperação após crash, leases e SIGTERM. As regressões de configuração, causas circulares/encapsuladas e heartbeat pendente durante retry/ack também passaram. Cobertura detalhada em [docs/TESTING.md](docs/TESTING.md).
+Ambiente: Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0. A execução inclui a métrica da DLQ independente do consumo, o heartbeat sem renovações acumuladas, o cancelamento SQL de renovação bloqueada e a proteção contra confirmação/retry pelo antigo proprietário do lease.
 
-A execução completa foi realizada no Ubuntu/WSL, com Bun 1.2.23, PostgreSQL 16.8 e LocalStack 4.2.0 em containers reais.
-
-**Limite da evidência:** os resultados comprovam os cenários exercitados nessa execução. Não são benchmark de carga; alterações no código exigem nova validação. O comando da suíte não inclui o check de formatação, executado separadamente e também configurado na CI.
+Os critérios de verificação definidos para este fechamento foram satisfeitos. As limitações de escala e rede continuam documentadas em ARCHITECTURE.md.
 
 ## Como repetir
 
@@ -30,19 +28,11 @@ Para guardar a saída no Bash/WSL:
 ```bash
 mkdir -p docs/verification
 set -o pipefail
-docker compose --profile test run --build --rm tests 2>&1 | tee docs/verification/test-all-current.log
+docker compose --profile test run --build --rm tests 2>&1 | tee "docs/verification/tests-$(date +%Y%m%d-%H%M%S).log"
 ```
 
-Se as imagens já estiverem disponíveis localmente, é possível repetir sem reconstruir ou baixar imagens:
+O rebuild é necessário para testar as alterações atuais. O comando deve terminar com código zero. Falha de build ou acesso ao Docker não representa execução dos testes.
 
-```bash
-mkdir -p docs/verification
-set -o pipefail
-docker compose --profile test run --rm --pull never tests 2>&1 | tee "docs/verification/tests-$(date +%Y%m%d-%H%M%S).log"
-```
+A formatação é verificada separadamente com `bun run format:check`.
 
-**Esse comando testa o código do último build.** Se houve alteração de código, restabeleça o acesso ao Docker Hub e execute novamente com `--build`. Caso falte alguma imagem local, também será necessário acesso à rede. Não associe o log de uma imagem antiga à validação de código novo.
-
-Para conferir a formatação localmente, use `bun run format:check`.
-
-Decisões em [ARCHITECTURE.md](ARCHITECTURE.md) e cobertura detalhada em [docs/TESTING.md](docs/TESTING.md).
+Decisões em [ARCHITECTURE.md](ARCHITECTURE.md) e cobertura em [docs/TESTING.md](docs/TESTING.md). Os testes verificam correção nos cenários exercitados; não são benchmark nem certificação para produção.
